@@ -6,6 +6,7 @@ import com.lrz.coroutine.Dispatcher;
 import com.lrz.coroutine.LLog;
 import com.lrz.coroutine.Priority;
 import com.lrz.coroutine.PriorityRunnable;
+import com.lrz.coroutine.flow.Function;
 import com.lrz.coroutine.flow.Observable;
 import com.lrz.coroutine.flow.Task;
 
@@ -22,6 +23,8 @@ class CoroutineLRZScope implements CoroutineLRZContext, IHandlerThread.OnHandler
     static final MainHandlerThread mainHandler = new MainHandlerThread();
     private static final ArrayList<IHandlerThread> threadPool = new ArrayList<>();
     private static final ArrayList<IHandlerThread> backPool = new ArrayList<>();
+    private volatile Function<Throwable, Boolean> errorHandler;//未处理的错误兜底方案
+    private volatile boolean isIgnoreCrash = true;
     private long keepTime = 1000 * 10;
     //正在运行的io线程数量
     private static volatile int runningCount = 0;
@@ -428,5 +431,25 @@ class CoroutineLRZScope implements CoroutineLRZContext, IHandlerThread.OnHandler
     @Override
     public boolean getStackTraceExtraEnable() {
         return this.stackTraceExtraEnable;
+    }
+
+    @Override
+    public synchronized void setEscapeHandler(Function<Throwable, Boolean> handler) {
+        this.errorHandler = handler;
+    }
+
+    @Override
+    public Function<Throwable, Boolean> getEscapeHandler() {
+        return errorHandler;
+    }
+
+    @Override
+    public void setIgnoreCrash(boolean isIgnoreCrash) {
+        this.isIgnoreCrash = isIgnoreCrash;
+    }
+
+    @Override
+    public boolean isIgnoreCrash() {
+        return this.isIgnoreCrash;
     }
 }

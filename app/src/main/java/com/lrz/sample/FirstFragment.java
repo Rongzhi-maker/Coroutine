@@ -61,19 +61,40 @@ public class FirstFragment extends Fragment {
         binding.buttonIo.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Emitter<String> emitter = new Emitter<String>() {
-                };
-                Observable<String> observable3 = CoroutineLRZContext.Create(emitter).subscribe(Dispatcher.IO, s -> {
-                    Log.i("---request:", "执行" + Thread.currentThread().getName());
-                }).error(error -> {
-                    Log.e("---request-error", Thread.currentThread().getName());
-                }).subscribe(Dispatcher.BACKGROUND, new Observer<String>() {
+                Observable<Boolean> observable = CoroutineLRZContext.Create(new Task<Boolean>() {
                     @Override
-                    public void onSubscribe(String s) {
-                        Log.i("---request2:", "执行" + Thread.currentThread().getName());
+                    public Boolean submit() {
+                        return true;
                     }
-                }).execute(Dispatcher.IO);
-                emitter.next(new Throwable());
+                }).thread(Dispatcher.BACKGROUND);
+                Observable<Boolean> observable2 = CoroutineLRZContext.Create(new Task<Boolean>() {
+                    @Override
+                    public Boolean submit() {
+                        throw new RuntimeException();
+//                        return true;
+                    }
+                }).subscribe(Dispatcher.BACKGROUND,new Observer<Boolean>() {
+                    @Override
+                    public void onSubscribe(Boolean aBoolean) {
+
+                    }
+                }).error(new IError() {
+                    @Override
+                    public void onError(Throwable error) {
+                        LLog.d("onError",Thread.currentThread().getName());
+                    }
+                }).error(Dispatcher.MAIN,new IError() {
+                    @Override
+                    public void onError(Throwable error) {
+                        LLog.d("onError2",Thread.currentThread().getName());
+                    }
+                }).thread(Dispatcher.IO).execute();
+//                ObservableSet.CreateOr(observable,observable2).subscribe(new Observer<Integer>() {
+//                    @Override
+//                    public void onSubscribe(Integer integer) {
+//                        LLog.d("onSubscribe2",Thread.currentThread().getName());
+//                    }
+//                }).execute();
             }
         });
 
@@ -194,7 +215,7 @@ public class FirstFragment extends Fragment {
 
     public void steam() {
         start()
-                .subscribe(Dispatcher.IO,new Observer<Integer>() {
+                .subscribe(new Observer<Integer>() {
                     @Override
                     public void onSubscribe(Integer integer) {
                         Log.i("---2subscribe", Thread.currentThread().getName() + "   " + integer);
@@ -205,12 +226,7 @@ public class FirstFragment extends Fragment {
     public Observable<Integer> start() {
         Emitter<Integer> emitter = new Emitter<Integer>() {
         };
-        Observable<Integer> observable = CoroutineLRZContext.Create(emitter).subscribe(new Observer<Integer>() {
-            @Override
-            public void onSubscribe(Integer integer) {
-                Log.i("---subscribe", Thread.currentThread().getName() + "   1");
-            }
-        }).thread(Dispatcher.BACKGROUND);
+        Observable<Integer> observable = CoroutineLRZContext.Create(emitter).thread(Dispatcher.MAIN);
         emitter.next(2);
         return observable;
     }

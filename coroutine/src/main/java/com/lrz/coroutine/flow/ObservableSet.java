@@ -206,40 +206,23 @@ public class ObservableSet extends Observable<Integer> {
     }
 
     private void proxyError(Observable<?> ob) {
-        IError<?> oldError = ob.getError();
-        Dispatcher dispatcher = ob.getErrorDispatcher();
-        if (dispatcher == null) dispatcher = ob.getDispatcher();
-        ob.error(dispatcher, new InnerError(ob, oldError, dispatcher, this));
+        Dispatcher dispatcher = ob.getDispatcher();
+        ob.error(dispatcher, new InnerError(ob, this));
     }
 
     static class InnerError implements IError<Throwable> {
         //原来的error
-        private final IError<?> error;
-        private final Dispatcher oldDispatch;
         private final ObservableSet observableSet;
         final Observable<?> ob;
 
-        InnerError(Observable<?> ob, IError<?> error, Dispatcher oldDispatch, ObservableSet observableSet) {
-            this.error = error;
-            this.oldDispatch = oldDispatch;
+        InnerError(Observable<?> ob, ObservableSet observableSet) {
             this.observableSet = observableSet;
             this.ob = ob;
         }
 
         @Override
         public void onError(Throwable throwable) {
-            IError error = this.error;
-            //先把流的错误发送出去
-            if (error != null) {
-                if (oldDispatch != null) {
-                    CoroutineLRZContext.INSTANCE.execute(oldDispatch, () -> {
-                        error.onError(throwable);
-                    });
-                } else {
-                    error.onError(throwable);
-                }
-            }
-            //再通知事件集更新完成情况
+            //通知事件集更新完成情况
             observableSet.onComplete(throwable, ob);
         }
     }

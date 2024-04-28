@@ -23,9 +23,7 @@ public class Observable<T> implements Closeable {
     protected volatile Task<T> task;
     protected Observer<T> observer;
     protected Function<T, ?> map;
-    private IError<Throwable> error;
-    // 错误回调线程
-    protected Dispatcher errorDispatcher;
+    private final LinkedBlockingDeque<OBJBox<Dispatcher, IError<Throwable>>> errors = new LinkedBlockingDeque<>(1);
     protected volatile Job job;
     // 延迟时间
     protected long delay = -1;
@@ -183,8 +181,7 @@ public class Observable<T> implements Closeable {
         Observable<?> observable = this;
         while (observable != null) {
             if (observable.task != null || observable.preObservable == null) {
-                observable.error = error;
-                observable.errorDispatcher = dispatcher;
+                observable.errors.offerLast(new OBJBox<Dispatcher, IError<Throwable>>(dispatcher, error));
                 LinkedBlockingDeque<Throwable> troubles;
                 if (!isCancel() && (troubles = getTroubles()) != null) {
                     LinkedList<Throwable> th = new LinkedList<>(troubles);
@@ -270,15 +267,6 @@ public class Observable<T> implements Closeable {
         Observable<?> observable = this;
         while (observable != null) {
             if (observable.dispatcher != null) return observable.dispatcher;
-            observable = observable.preObservable;
-        }
-        return null;
-    }
-
-    public Dispatcher getErrorDispatcher() {
-        Observable<?> observable = this;
-        while (observable != null) {
-            if (observable.errorDispatcher != null) return observable.errorDispatcher;
             observable = observable.preObservable;
         }
         return null;
@@ -384,10 +372,10 @@ public class Observable<T> implements Closeable {
         return task;
     }
 
-    protected synchronized IError<Throwable> getError() {
+    protected synchronized LinkedBlockingDeque<OBJBox<Dispatcher, IError<Throwable>>> getErrors() {
         Observable<?> pre = this;
         while (pre != null) {
-            if (pre.error != null) return pre.error;
+            if (pre.preObservable == null) return pre.errors;
             pre = pre.preObservable;
         }
         return null;
@@ -413,7 +401,7 @@ public class Observable<T> implements Closeable {
 
     protected void onError(Throwable e) {
         if (isCancel()) return;
-        IError<Throwable> error = getError();
+        LinkedBlockingDeque<OBJBox<Dispatcher, IError<Throwable>>> errors = getErrors();
         Task<?> task = getTask();
         if (task != null) {
             StackTraceElement[] stackTraceExtra = task.getStackTraceExtra();
@@ -425,30 +413,38 @@ public class Observable<T> implements Closeable {
                 e.setStackTrace(stackTraceElements);
             }
         }
-        if (error != null) {
-            Dispatcher dispatcher = getErrorDispatcher();
-            // 向链表上游获取就近的观察者线程
-            if (dispatcher == null) dispatcher = getDispatcher();
-            if (dispatcher == null) dispatcher = getTaskDispatch();
-            if (dispatcher == null) {
-                error.onError(e);
-                LinkedBlockingDeque<Throwable> troubles;
-                if (!isCancel() && getInterval() <= 0 && (troubles = getTroubles()) != null)
-                    troubles.offerLast(e);
-            } else {
-                CoroutineLRZContext.INSTANCE.execute(dispatcher, () -> {
+        for (OBJBox<Dispatcher, IError<Throwable>> errorOBJ : errors) {
+            IError<Throwable> error = errorOBJ.o2;
+            if (error != null) {
+                Dispatcher dispatcher = errorOBJ.o1;
+                if (dispatcher == null) dispatcher = getDispatcher();
+                if (dispatcher == null) dispatcher = getTaskDispatch();
+                if (dispatcher == null) {
                     error.onError(e);
                     LinkedBlockingDeque<Throwable> troubles;
                     if (!isCancel() && getInterval() <= 0 && (troubles = getTroubles()) != null)
                         troubles.offerLast(e);
-                });
+                } else {
+                    CoroutineLRZContext.INSTANCE.execute(dispatcher, () -> {
+                        error.onError(e);
+                        LinkedBlockingDeque<Throwable> troubles;
+                        if (!isCancel() && getInterval() <= 0 && (troubles = getTroubles()) != null)
+                            troubles.offerLast(e);
+                    });
+                }
+            } else {
+                LinkedBlockingDeque<Throwable> troubles;
+                if (!isCancel() && getInterval() <= 0 && (troubles = getTroubles()) != null)
+                    troubles.offerLast(e);
+                Function<Throwable, Boolean> handler = CoroutineLRZContext.GetEscapeHandler();
+                //如果外部不处理，则抛出异常
+                if (handler != null && !handler.apply(e) && !CoroutineLRZContext.IsIgnoreCrash()) {
+                    if (e instanceof RuntimeException) throw (RuntimeException) e;
+                    throw new CoroutineFlowException("coroutine inner error,look at:", e);
+                }
             }
-        } else {
-            LinkedBlockingDeque<Throwable> troubles;
-            if (!isCancel() && getInterval() <= 0 && (troubles = getTroubles()) != null)
-                troubles.offerLast(e);
-            LLog.e("COROUTINE_OBS", "coroutine inner error,look at:", e);
         }
+
     }
 
     /**
@@ -507,10 +503,10 @@ public class Observable<T> implements Closeable {
 
     private void dispatchError(Throwable e) {
         Observable observable = this;
-        while (observable.error == null) {
+        while (observable.preObservable != null) {
             observable = preObservable;
-            if (observable == null) return;
         }
+        if (observable == null) return;
         observable.onError(e);
     }
 
@@ -551,7 +547,7 @@ public class Observable<T> implements Closeable {
         preObservable = null;
         task = null;
         map = null;
-        error = null;
+        errors.clear();
         observer = null;
         isCancel = true;
     }

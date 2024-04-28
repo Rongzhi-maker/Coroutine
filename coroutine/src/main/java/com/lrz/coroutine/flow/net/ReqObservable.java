@@ -3,9 +3,13 @@ package com.lrz.coroutine.flow.net;
 import com.lrz.coroutine.Dispatcher;
 import com.lrz.coroutine.LLog;
 import com.lrz.coroutine.flow.Function;
+import com.lrz.coroutine.flow.IError;
+import com.lrz.coroutine.flow.OBJBox;
 import com.lrz.coroutine.flow.Observable;
 import com.lrz.coroutine.flow.Observer;
 import com.lrz.coroutine.flow.Task;
+
+import java.util.concurrent.LinkedBlockingDeque;
 
 import okhttp3.Call;
 import okhttp3.OkHttpClient;
@@ -101,7 +105,8 @@ public class ReqObservable<T> extends Observable<T> {
             if (taskDispatcher == null) {
                 taskDispatcher = hasSubscriber() ? Dispatcher.IO : Dispatcher.BACKGROUND;
             }
-            if (getError() == null) {
+            LinkedBlockingDeque<OBJBox<Dispatcher, IError<Throwable>>> errors = getErrors();
+            if (errors == null || errors.isEmpty()) {
                 error(new DefReqError());
             }
             // 提高性能，在这里拦截一部分请求，可以减少分配线程后再判断，浪费资源
