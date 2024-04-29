@@ -61,30 +61,23 @@ public class FirstFragment extends Fragment {
         binding.buttonIo.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Observable<Boolean> observable = CoroutineLRZContext.Create(new Task<Boolean>() {
-                    @Override
-                    public Boolean submit() {
-                        return true;
-                    }
-                }).thread(Dispatcher.BACKGROUND);
-                Observable<Boolean> observable2 = CoroutineLRZContext.Create(new Task<Boolean>() {
-                    @Override
-                    public Boolean submit() {
-                        throw new RuntimeException();
-//                        return true;
-                    }
-                }).subscribe(Dispatcher.BACKGROUND,new Observer<Boolean>() {
-                    @Override
-                    public void onSubscribe(Boolean aBoolean) {
+                for (int i = 0;i<2;i++) {
+                    CommonRequest.Create(new RequestBuilder<String>() {
+                        {
+                            url("https://www.baidu.com");
+                        }
+                    }).map(new Function<String, String>() {
+                        @Override
+                        public String apply(String s) {
+                            return null;
+                        }
+                    }).subscribe(Dispatcher.IO, s -> {
+                        Log.i("---request:", "执行" + s);
 
-                    }
-                }).thread(Dispatcher.IO).execute();
-//                ObservableSet.CreateOr(observable,observable2).subscribe(new Observer<Integer>() {
-//                    @Override
-//                    public void onSubscribe(Integer integer) {
-//                        LLog.d("onSubscribe2",Thread.currentThread().getName());
-//                    }
-//                }).execute();
+                    }).error(error -> {
+                        Log.e("---request-error", "", error);
+                    }).GET();
+                }
             }
         });
 
