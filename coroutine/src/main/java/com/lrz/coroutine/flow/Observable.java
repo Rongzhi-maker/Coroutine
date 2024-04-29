@@ -413,36 +413,38 @@ public class Observable<T> implements Closeable {
                 e.setStackTrace(stackTraceElements);
             }
         }
-        for (OBJBox<Dispatcher, IError<Throwable>> errorOBJ : errors) {
-            IError<Throwable> error = errorOBJ.o2;
-            if (error != null) {
-                Dispatcher dispatcher = errorOBJ.o1;
-                if (dispatcher == null) dispatcher = getDispatcher();
-                if (dispatcher == null) dispatcher = getTaskDispatch();
-                if (dispatcher == null) {
-                    error.onError(e);
-                    LinkedBlockingDeque<Throwable> troubles;
-                    if (!isCancel() && getInterval() <= 0 && (troubles = getTroubles()) != null)
-                        troubles.offerLast(e);
-                } else {
-                    CoroutineLRZContext.INSTANCE.execute(dispatcher, () -> {
+        if (errors != null && !errors.isEmpty()) {
+            for (OBJBox<Dispatcher, IError<Throwable>> errorOBJ : errors) {
+                IError<Throwable> error = errorOBJ.o2;
+                if (error != null) {
+                    Dispatcher dispatcher = errorOBJ.o1;
+                    if (dispatcher == null) dispatcher = getDispatcher();
+                    if (dispatcher == null) dispatcher = getTaskDispatch();
+                    if (dispatcher == null) {
                         error.onError(e);
                         LinkedBlockingDeque<Throwable> troubles;
                         if (!isCancel() && getInterval() <= 0 && (troubles = getTroubles()) != null)
                             troubles.offerLast(e);
-                    });
-                }
-            } else {
-                LinkedBlockingDeque<Throwable> troubles;
-                if (!isCancel() && getInterval() <= 0 && (troubles = getTroubles()) != null)
-                    troubles.offerLast(e);
-                Function<Throwable, Boolean> handler = CoroutineLRZContext.GetEscapeHandler();
-                //如果外部不处理，则抛出异常
-                if (handler != null && !handler.apply(e) && !CoroutineLRZContext.IsIgnoreCrash()) {
-                    if (e instanceof RuntimeException) throw (RuntimeException) e;
-                    throw new CoroutineFlowException("coroutine inner error,look at:", e);
+                    } else {
+                        CoroutineLRZContext.INSTANCE.execute(dispatcher, () -> {
+                            error.onError(e);
+                            LinkedBlockingDeque<Throwable> troubles;
+                            if (!isCancel() && getInterval() <= 0 && (troubles = getTroubles()) != null)
+                                troubles.offerLast(e);
+                        });
+                    }
                 }
             }
+        } else {
+            LinkedBlockingDeque<Throwable> troubles;
+            if (!isCancel() && getInterval() <= 0 && (troubles = getTroubles()) != null)
+                troubles.offerLast(e);
+            Function<Throwable, Boolean> handler = CoroutineLRZContext.GetEscapeHandler();
+            //如果外部不处理，则抛出异常
+            if ((handler != null && !handler.apply(e)) || !CoroutineLRZContext.IsIgnoreCrash()) {
+                if (e instanceof RuntimeException) throw (RuntimeException) e;
+                throw new CoroutineFlowException("coroutine inner error,look at:", e);
+            } else LLog.e("COROUTINE_OBS", "coroutine inner error,look at:", e);
         }
 
     }

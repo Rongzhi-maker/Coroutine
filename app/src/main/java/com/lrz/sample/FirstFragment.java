@@ -78,16 +78,6 @@ public class FirstFragment extends Fragment {
                     public void onSubscribe(Boolean aBoolean) {
 
                     }
-                }).error(new IError() {
-                    @Override
-                    public void onError(Throwable error) {
-                        LLog.d("onError",Thread.currentThread().getName());
-                    }
-                }).error(Dispatcher.MAIN,new IError() {
-                    @Override
-                    public void onError(Throwable error) {
-                        LLog.d("onError2",Thread.currentThread().getName());
-                    }
                 }).thread(Dispatcher.IO).execute();
 //                ObservableSet.CreateOr(observable,observable2).subscribe(new Observer<Integer>() {
 //                    @Override
