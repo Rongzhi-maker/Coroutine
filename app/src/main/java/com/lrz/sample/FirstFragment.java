@@ -61,23 +61,22 @@ public class FirstFragment extends Fragment {
         binding.buttonIo.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                for (int i = 0;i<2;i++) {
-                    CommonRequest.Create(new RequestBuilder<String>() {
-                        {
-                            url("https://www.baidu.com");
-                        }
-                    }).map(new Function<String, String>() {
-                        @Override
-                        public String apply(String s) {
-                            return null;
-                        }
-                    }).subscribe(Dispatcher.IO, s -> {
-                        Log.i("---request:", "执行" + s);
-
-                    }).error(error -> {
-                        Log.e("---request-error", "", error);
-                    }).GET();
-                }
+                CoroutineLRZContext.Create(new Task<Object>() {
+                    @Override
+                    public Object submit() {
+                        throw new RuntimeException();
+                    }
+                }).error(new IError() {
+                    @Override
+                    public void onError(Throwable error) {
+                        LLog.e("onError1", "");
+                    }
+                }).error(new IError() {
+                    @Override
+                    public void onError(Throwable error) {
+                        LLog.e("onError2", "");
+                    }
+                }).execute(Dispatcher.MAIN);
             }
         });
 

@@ -23,7 +23,7 @@ public class Observable<T> implements Closeable {
     protected volatile Task<T> task;
     protected Observer<T> observer;
     protected Function<T, ?> map;
-    private final LinkedBlockingDeque<OBJBox<Dispatcher, IError<Throwable>>> errors = new LinkedBlockingDeque<>(1);
+    private final LinkedBlockingDeque<OBJBox<Dispatcher, IError<Throwable>>> errors = new LinkedBlockingDeque<>();
     protected volatile Job job;
     // 延迟时间
     protected long delay = -1;
