@@ -61,22 +61,58 @@ public class FirstFragment extends Fragment {
         binding.buttonIo.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                CoroutineLRZContext.Create(new Task<Object>() {
+                Emitter<Integer> emitter = new Emitter<Integer>() {
+                };
+                Observable<Integer> observable = CoroutineLRZContext.Create(emitter)
+                        .map(new Function<Integer, Integer>() {
+                            @Override
+                            public Integer apply(Integer integer) {
+                                LLog.e("Observable", "map 1:" + Thread.currentThread().getName());
+                                return null;
+                            }
+                        }).subscribe(Dispatcher.IO, new Observer<Integer>() {
+                            @Override
+                            public void onSubscribe(Integer integer) {
+                                LLog.e("Observable", "subscribe 0:" + Thread.currentThread().getName());
+                            }
+                        }).map(new Function<Integer, Integer>() {
+                            @Override
+                            public Integer apply(Integer integer) {
+                                LLog.e("Observable", "map 2:" + Thread.currentThread().getName());
+                                return 2;
+                            }
+                        }).map(new Function<Integer, Integer>() {
+                            @Override
+                            public Integer apply(Integer integer) {
+                                LLog.e("Observable", "map 5:" + Thread.currentThread().getName());
+                                return 2;
+                            }
+                        }).subscribe(Dispatcher.BACKGROUND, new Observer<Integer>() {
+                            @Override
+                            public void onSubscribe(Integer integer) {
+                                LLog.e("Observable", "subscribe 1:" + Thread.currentThread().getName());
+                            }
+                        });
+                emitter.next(1);
+                // obs1 -> obs2
+                observable.map(new Function<Integer, Boolean>() {
                     @Override
-                    public Object submit() {
-                        throw new RuntimeException();
+                    public Boolean apply(Integer integer) {
+                        LLog.e("Observable", "map 3:" + Thread.currentThread().getName());
+                        return false;
                     }
-                }).error(new IError() {
+                }).map(new Function<Boolean, String>() {
                     @Override
-                    public void onError(Throwable error) {
-                        LLog.e("onError1", "");
+                    public String apply(Boolean aBoolean) {
+                        LLog.e("Observable", "map 4:" + Thread.currentThread().getName());
+                        return "11";
                     }
-                }).error(new IError() {
+                }).subscribe(new Observer<String>() {
                     @Override
-                    public void onError(Throwable error) {
-                        LLog.e("onError2", "");
+                    public void onSubscribe(String b) {
+                        LLog.e("Observable", "subscribe 2:" + Thread.currentThread().getName());
                     }
-                }).execute(Dispatcher.MAIN);
+                });
             }
         });
 

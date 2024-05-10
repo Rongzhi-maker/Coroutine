@@ -82,36 +82,28 @@ public class Observable<T> implements Closeable {
      */
     public synchronized Observable<T> subscribe(Dispatcher dispatcher, Observer<T> result) {
         if (this.observer != null) {
-            return map().subscribe(dispatcher, result);
+            return mapInner().subscribe(dispatcher, result);
         } else {
             this.dispatcher = dispatcher;
             this.observer = result;
             //如果自己没有。则拿上一个ob中的数据来补发给现在的ob
-            Observable preObservable = getPreObservable();
-            if (preObservable == null) preObservable = this;
-            LinkedBlockingDeque<Consequence<T>> consequences;
-            if (!isCancel() && (consequences = preObservable.getResults()) != null) {
-                LinkedList<Consequence<T>> rs = new LinkedList<>(consequences);
-                if (!rs.isEmpty()) {
-                    Dispatcher dis = getDispatcher();
-                    if (dis == null) dis = getTaskDispatch();
-                    Observable finalPreObservable = preObservable;
-                    if (dis != null) {
-                        CoroutineLRZContext.INSTANCE.execute(dis, () -> {
-                            for (Consequence<T> o : rs) {
-                                if (isCancel()) break;
-                                try {
-                                    if (finalPreObservable != this) {
-                                        finalPreObservable.dispatchNext(o.t);
-                                    } else {
-                                        finalPreObservable.dispatchSubscribe((T) o.t);
-                                    }
-                                } catch (Exception e) {
-                                    dispatchError(e);
-                                }
-                            }
-                        });
-                    } else {
+            dispatchConsequences();
+            return this;
+        }
+    }
+
+    private void dispatchConsequences() {
+        Observable preObservable = getPreObservable();
+        if (preObservable == null) preObservable = this;
+        LinkedBlockingDeque<Consequence<T>> consequences;
+        if (!isCancel() && (consequences = preObservable.getResults()) != null) {
+            LinkedList<Consequence<T>> rs = new LinkedList<>(consequences);
+            if (!rs.isEmpty()) {
+                Dispatcher dis = getDispatcher();
+                if (dis == null) dis = getTaskDispatch();
+                Observable finalPreObservable = preObservable;
+                if (dis != null) {
+                    CoroutineLRZContext.INSTANCE.execute(dis, () -> {
                         for (Consequence<T> o : rs) {
                             if (isCancel()) break;
                             try {
@@ -124,10 +116,22 @@ public class Observable<T> implements Closeable {
                                 dispatchError(e);
                             }
                         }
+                    });
+                } else {
+                    for (Consequence<T> o : rs) {
+                        if (isCancel()) break;
+                        try {
+                            if (finalPreObservable != this) {
+                                finalPreObservable.dispatchNext(o.t);
+                            } else {
+                                finalPreObservable.dispatchSubscribe((T) o.t);
+                            }
+                        } catch (Exception e) {
+                            dispatchError(e);
+                        }
                     }
                 }
             }
-            return this;
         }
     }
 
@@ -144,7 +148,24 @@ public class Observable<T> implements Closeable {
         try {
             observableF = this.getClass().newInstance();
             observableF.preObservable = this;
-            nextObservable = observableF;
+            this.nextObservable = observableF;
+            observableF.observer = f -> {
+            };
+            //如果自己没有。则拿上一个ob中的数据来补发给现在的ob
+            dispatchConsequences();
+        } catch (Exception e) {
+            dispatchError(e);
+        }
+        return observableF;
+    }
+
+
+    protected synchronized Observable<T> mapInner() {
+        Observable<T> observableF = null;
+        try {
+            observableF = this.getClass().newInstance();
+            observableF.preObservable = this;
+            this.nextObservable = observableF;
         } catch (Exception e) {
             dispatchError(e);
         }
