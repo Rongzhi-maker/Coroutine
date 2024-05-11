@@ -525,11 +525,10 @@ public class Observable<T> implements Closeable {
     }
 
     private void dispatchError(Throwable e) {
-        Observable observable = this;
+        Observable<?> observable = this;
         while (observable.preObservable != null) {
-            observable = preObservable;
+            observable = observable.preObservable;
         }
-        if (observable == null) return;
         observable.onError(e);
     }
 
