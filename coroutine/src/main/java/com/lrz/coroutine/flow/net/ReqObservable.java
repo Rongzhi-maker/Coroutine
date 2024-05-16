@@ -56,7 +56,7 @@ public class ReqObservable<T> extends Observable<T> {
 
     @Override
     protected void onSubscribe(T t) {
-        if (t == null && task != null) return;
+        if (t == null && task != null && task instanceof RequestBuilder) return;
         super.onSubscribe(t);
     }
 
