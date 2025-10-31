@@ -254,8 +254,29 @@ public class CommonRequest {
                     }
                 }
             } else {
-                body.close();
-                throw new RequestException("Request Error, the http code = " + response.code(), response.code());
+                try {
+                    String json = body.string();
+                    if (codeStr != null && msgStr != null) {
+                        try {
+                            JSONObject jo = new JSONObject(json);
+                            int code = jo.getInt(codeStr);
+                            if (code != 0) {
+                                String msg = jo.getString(msgStr);
+                                CodeInterceptor interceptor = codeInterceptors.get(code);
+                                if (interceptor != null) {
+                                    interceptor.onInterceptor(json, msg);
+                                }
+                                throw new RequestException("Request Error, the http code=" + response.code() + ",code=" + code + ",msg=" + msg, code);
+                            }
+                        } catch (JSONException e) {
+                            throw new RequestException("Request Error, the http code=" + response.code() + ",data=" + json, response.code());
+                        }
+                    }
+                } catch (IOException e) {
+                    body.close();
+                    throw new RequestException("Request Error, the http code=" + response.code(), response.code());
+                }
+                throw new RequestException("Request Error, the http code=" + response.code(), response.code());
             }
         } else {
             throw new RequestException("No data requested!", ResponseCode.CODE_ERROR_RESPONSE_NULL);
