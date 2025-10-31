@@ -48,7 +48,7 @@ afterEvaluate {
                 // 设置Maven坐标
                 groupId = 'com.github.Rongzhi-maker' // 替换为您的GitHub用户名
                 artifactId = 'Coroutine' // 替换为您的库名称
-                version = '1.2.8.27' // 替换为您的版本号
+                version = '1.2.8.28' // 替换为您的版本号
             }
         }
     }
