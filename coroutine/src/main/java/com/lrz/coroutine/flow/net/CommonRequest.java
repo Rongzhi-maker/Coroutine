@@ -120,7 +120,7 @@ public class CommonRequest {
 
 
     public <D> D requestGet(final String url, final Map<String, String> params, Class<D> dClass, Map<String, String> header, int tag) throws RequestException {
-        if (url == null || url.length() < 1) {
+        if (url == null || url.isEmpty()) {
             throw new RequestException("url is illegal,please check you url", ResponseCode.CODE_ERROR_URL_ILLEGAL);
         }
         HttpUrl httpUrl = HttpUrl.parse(url);
@@ -161,7 +161,7 @@ public class CommonRequest {
     }
 
     public <D> D requestPost(final String url, Map<String, String> params, Class<D> dClass, Map<String, String> header, int tag) throws RequestException {
-        if (url == null || url.length() < 1) {
+        if (url == null || url.isEmpty()) {
             throw new RequestException("url is illegal,please check you url", ResponseCode.CODE_ERROR_URL_ILLEGAL);
         }
 
@@ -266,15 +266,16 @@ public class CommonRequest {
                                 if (interceptor != null) {
                                     interceptor.onInterceptor(json, msg);
                                 }
-                                throw new RequestException("Request Error, the http code=" + response.code() + ",code=" + code + ",msg=" + msg, code);
+                                RequestException innerException = new RequestException(msg, response.code());
+                                throw new RequestException("Request Error, the http code=" + response.code() + ",code=" + code + ",msg=" + msg, innerException, code);
                             }
                         } catch (JSONException e) {
-                            throw new RequestException("Request Error, the http code=" + response.code() + ",data=" + json, response.code());
+                            throw new RequestException("Request Error, the http code=" + response.code() + ",data=" + json, e, response.code());
                         }
                     }
                 } catch (IOException e) {
                     body.close();
-                    throw new RequestException("Request Error, the http code=" + response.code(), response.code());
+                    throw new RequestException("Request Error, the http code=" + response.code(), e, response.code());
                 }
                 throw new RequestException("Request Error, the http code=" + response.code(), response.code());
             }
@@ -284,7 +285,7 @@ public class CommonRequest {
     }
 
     public <D> D postJson(final String url, Map<String, String> urlParams, String json, Class<D> dClass, Map<String, String> header, int tag) throws RequestException {
-        if (url == null || url.length() < 1) {
+        if (url == null || url.isEmpty()) {
             throw new RequestException("url is illegal,please check you url", ResponseCode.CODE_ERROR_URL_ILLEGAL);
         }
         HttpUrl httpUrl = HttpUrl.parse(url);

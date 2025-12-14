@@ -3,14 +3,19 @@ plugins {
 }
 
 android {
-    compileSdk 32
+    namespace "com.lrz.sample"
+    compileSdk 34
 
     defaultConfig {
         applicationId "com.lrz.coroutine"
         minSdk 16
-        targetSdk 32
+        targetSdk 34
         versionCode 1
         versionName "1.0"
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
