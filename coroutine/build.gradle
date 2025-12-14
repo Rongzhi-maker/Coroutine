@@ -1,5 +1,6 @@
 plugins {
     id 'com.android.library'
+    id 'maven-publish'
 }
 
 android {
@@ -30,4 +31,52 @@ dependencies {
     // 如果需要使用 http 请求功能，请以来
     compileOnly "com.squareup.okhttp3:okhttp:4.10.0"
     compileOnly 'com.google.code.gson:gson:2.9.0'
+}
+
+// 配置源码打包任务
+task sourcesJar(type: Jar) {
+    archiveClassifier.set('sources')
+    from android.sourceSets.main.java.srcDirs
+}
+
+// 配置 Maven 发布
+// JitPack 会自动从 Git 仓库信息中获取 groupId 和 version
+// groupId 格式：com.github.用户名（如：com.github.Rongzhi-maker）
+// version 格式：Git tag 或 commit hash
+afterEvaluate {
+    publishing {
+        publications {
+            release(MavenPublication) {
+                from components.release
+
+                // 添加源码包
+                artifact(sourcesJar)
+
+                // artifactId 必须与项目名称或模块名称匹配
+                // JitPack 会自动使用仓库名称作为 artifactId
+                artifactId = 'Coroutine'
+
+                // 配置 POM 文件信息（可选，但建议配置）
+                pom {
+                    name = 'Coroutine'
+                    description = 'Android 高性能线程池框架-事件流-http请求'
+                    url = 'https://github.com/Rongzhi-maker/Coroutine'
+                    
+                    licenses {
+                        license {
+                            name = 'The Apache License, Version 2.0'
+                            url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                        }
+                    }
+                    
+                    developers {
+                        developer {
+                            id = 'Rongzhi-maker'
+                            name = 'Rongzhi-maker'
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
