@@ -33,24 +33,24 @@ dependencies {
     compileOnly 'com.google.code.gson:gson:2.9.0'
 }
 
-// 配置源码打包任务
-task sourcesJar(type: Jar) {
-    archiveClassifier.set('sources')
-    from android.sourceSets.main.java.srcDirs
-}
-
 // 配置 Maven 发布
 // JitPack 会自动从 Git 仓库信息中获取 groupId 和 version
 // groupId 格式：com.github.用户名（如：com.github.Rongzhi-maker）
 // version 格式：Git tag 或 commit hash
 afterEvaluate {
+    // 配置源码打包任务（必须在 afterEvaluate 中，因为需要 android 配置完成）
+    def sourcesJarTask = tasks.register('sourcesJar', Jar) {
+        archiveClassifier.set('sources')
+        from android.sourceSets.main.java.srcDirs
+    }
+
     publishing {
         publications {
             release(MavenPublication) {
                 from components.release
 
-                // 添加源码包
-                artifact(sourcesJar)
+                // 添加源码包（可选）
+                artifact(sourcesJarTask.get())
 
                 // artifactId 必须与项目名称或模块名称匹配
                 // JitPack 会自动使用仓库名称作为 artifactId
