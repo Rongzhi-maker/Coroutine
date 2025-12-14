@@ -37,24 +37,32 @@ dependencies {
 // JitPack 会自动从 Git 仓库信息中获取 groupId 和 version
 // groupId 格式：com.github.用户名（如：com.github.Rongzhi-maker）
 // version 格式：Git tag 或 commit hash
+
+// 用于打包源代码的任务
+def sourcesJar = tasks.register('sourcesJar', Jar) {
+    archiveClassifier.set('sources')
+    from android.sourceSets.main.java.srcDirs
+}
+
+// 配置发布 - 在 afterEvaluate 中配置
+// 在 AGP 8.x 中，需要使用 android.libraryVariants 来获取 release variant
 afterEvaluate {
-    // 配置源码打包任务（必须在 afterEvaluate 中，因为需要 android 配置完成）
-    def sourcesJarTask = tasks.register('sourcesJar', Jar) {
-        archiveClassifier.set('sources')
-        from android.sourceSets.main.java.srcDirs
-    }
-
-    publishing {
-        publications {
-            release(MavenPublication) {
-                from components.release
-
-                // 添加源码包（可选）
-                artifact(sourcesJarTask.get())
-
+    android.libraryVariants.all { variant ->
+        if (variant.name == 'release') {
+            // 为 release variant 创建 publication
+            publishing.publications.create("release", MavenPublication) {
                 // artifactId 必须与项目名称或模块名称匹配
                 // JitPack 会自动使用仓库名称作为 artifactId
                 artifactId = 'Coroutine'
+
+                // 使用 variant 的 assemble 任务的输出文件
+                def aarFile = variant.outputs.first().outputFile
+                artifact(aarFile) {
+                    builtBy variant.assembleProvider
+                }
+
+                // 添加源码包
+                artifact(sourcesJar)
 
                 // 配置 POM 文件信息（可选，但建议配置）
                 pom {
