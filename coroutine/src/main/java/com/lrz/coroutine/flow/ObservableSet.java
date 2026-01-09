@@ -41,7 +41,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 举例：更新用户信息需要request两个接口，一个返回用户基本信息，一个返回用户vip信息，则两个流执行结果都是1.则集的结果是1，否则，是0
  * <p>
  * <p>
- * 2.or，多个事件流的执行只要有一个成功，则集的执行就算成功，即 集的结果 y = x1|x2|x3,只有x都是0，y才是0
+ * 2.or，多个事件流的执行只要有一个执行完毕(不管成功与否)，则集的执行就算成功
+ * 举例：多个异步任务，只尝试执行，不关心成功与否
+ * </p>
+ * <p>
+ * 3.success，多个事件流的执行只要有一个执行成功，则集的执行就算成功，即 集的结果 y = x1|x2|x3,只有x都是0，y才是0
  * 举例：在获取不同地址的相同资源，只要有一个商返回，则本次的请求就算成功
  * </p>
  */
@@ -97,7 +101,7 @@ public class ObservableSet extends Observable<Integer> {
     private static @NotNull
     ObservableSet create(Observable<?>... observable) {
         ObservableSet set = new ObservableSet(observable);
-        if (set.observables != null && set.observables.length > 0) {
+        if (set.observables != null) {
             for (Observable<?> ob : set.observables) {
                 ob.subscribe(o -> set.onComplete(null, ob));
             }
@@ -110,36 +114,38 @@ public class ObservableSet extends Observable<Integer> {
         count.incrementAndGet();
         if (throwable == null) successNum.incrementAndGet();
         if (setMode == 1) {
-            if (observables != null && count.get() >= observables.length) {
+            if (successNum.get() == count.get() && observables != null && count.get() >= observables.length) {
                 //都完成了,且没有发生错误,本轮success个数
                 onSubscribe(successNum.get());
+            } else if (throwable != null) {
+                onError(throwable);
+                closeOthers(observable);
             }
         } else if (setMode == 2) {
             if (observables != null && count.get() == 1) {
-                //在or模式下 只要有一个成功了，则代表本次事件集成功
+                //在or模式下 只要有一个执行完毕，则代表本次事件集成功
                 onSubscribe(successNum.get());
                 //完成后，是否需要关闭其他流
-                if (closeOnComplete) {
-                    for (Observable<?> ob : observables) {
-                        if (ob != observable) ob.cancel();
-                    }
-                }
+                if (closeOnComplete) closeOthers(observable);
             }
         } else if (setMode == 3) {
             //竞争模式下，有且仅有一个成功，才会回调
             if (observables != null && successNum.get() == 1) {
                 onSubscribe(1);
                 //完成后，是否需要关闭其他流
-                if (closeOnComplete) {
-                    for (Observable<?> ob : observables) {
-                        if (ob != observable) ob.cancel();
-                    }
-                }
+                if (closeOnComplete) closeOthers(observable);
             }
             //如果没有任何一个成功执行，则走error
             if (observables != null && count.get() >= observables.length && successNum.get() == 0) {
                 onError(new CoroutineFlowException("all streams are error!"));
             }
+        }
+    }
+
+    void closeOthers(Observable<?> observable) {
+        if (observables == null) return;
+        for (Observable<?> ob : observables) {
+            if (ob != observable) ob.cancel();
         }
     }
 
@@ -180,7 +186,7 @@ public class ObservableSet extends Observable<Integer> {
      * 执行多个任务
      */
     private synchronized void doObservables() {
-        if (observables != null && observables.length > 0) {
+        if (observables != null) {
             for (Observable<?> ob : observables) {
                 proxyError(ob);
                 ob.execute();

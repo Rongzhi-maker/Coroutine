@@ -61,58 +61,32 @@ public class FirstFragment extends Fragment {
         binding.buttonIo.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Emitter<Integer> emitter = new Emitter<Integer>() {
+                Emitter<String> emitter = new Emitter<String>() {
                 };
-                Observable<Integer> observable = CoroutineLRZContext.Create(emitter)
-                        .map(new Function<Integer, Integer>() {
-                            @Override
-                            public Integer apply(Integer integer) {
-                                LLog.e("Observable", "map 1:" + Thread.currentThread().getName());
-                                return null;
-                            }
-                        }).subscribe(Dispatcher.IO, new Observer<Integer>() {
-                            @Override
-                            public void onSubscribe(Integer integer) {
-                                LLog.e("Observable", "subscribe 0:" + Thread.currentThread().getName());
-                            }
-                        }).map(new Function<Integer, Integer>() {
-                            @Override
-                            public Integer apply(Integer integer) {
-                                LLog.e("Observable", "map 2:" + Thread.currentThread().getName());
-                                return 2;
-                            }
-                        }).map(new Function<Integer, Integer>() {
-                            @Override
-                            public Integer apply(Integer integer) {
-                                LLog.e("Observable", "map 5:" + Thread.currentThread().getName());
-                                return 2;
-                            }
-                        }).subscribe(Dispatcher.BACKGROUND, new Observer<Integer>() {
-                            @Override
-                            public void onSubscribe(Integer integer) {
-                                LLog.e("Observable", "subscribe 1:" + Thread.currentThread().getName());
-                            }
-                        });
-                emitter.next(1);
-                // obs1 -> obs2
-                observable.map(new Function<Integer, Boolean>() {
+                Observable<String> observable = CoroutineLRZContext.Create(emitter).subscribe(new Observer<String>() {
                     @Override
-                    public Boolean apply(Integer integer) {
-                        LLog.e("Observable", "map 3:" + Thread.currentThread().getName());
-                        return false;
-                    }
-                }).map(new Function<Boolean, String>() {
-                    @Override
-                    public String apply(Boolean aBoolean) {
-                        LLog.e("Observable", "map 4:" + Thread.currentThread().getName());
-                        return "11";
-                    }
-                }).subscribe(new Observer<String>() {
-                    @Override
-                    public void onSubscribe(String b) {
-                        LLog.e("Observable", "subscribe 2:" + Thread.currentThread().getName());
+                    public void onSubscribe(String s) {
+                        LLog.d("=========","发射器："+s);
                     }
                 });
+                Observable<String> observable2 = CoroutineLRZContext.Create(new Task<String>() {
+                    @Override
+                    public String submit() {
+                        return "普通任务";
+                    }
+                }).thread(Dispatcher.IO).delay(1000);
+                ObservableSet.CreateAnd(observable,observable2).subscribe(new Observer<Integer>() {
+                    @Override
+                    public void onSubscribe(Integer integer) {
+                        LLog.d("=========","事件总线结束："+integer);
+                    }
+                }).error(new IError() {
+                    @Override
+                    public void onError(Throwable error) {
+                        LLog.d("=========","事件总线错误："+error.getMessage());
+                    }
+                }).execute();
+                emitter.next(new RequestException("发射错误",1));
             }
         });
 
