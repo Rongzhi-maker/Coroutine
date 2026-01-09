@@ -86,7 +86,7 @@ public class FirstFragment extends Fragment {
                         LLog.d("=========","事件总线错误："+error.getMessage());
                     }
                 }).execute();
-                emitter.next(new RequestException("发射错误",1));
+                emitter.next("发射");
             }
         });
 
