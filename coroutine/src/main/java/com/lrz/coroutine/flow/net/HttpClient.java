@@ -61,15 +61,10 @@ public class HttpClient {
                 logRequest(request);
             }
             Response proceed = chain.proceed(request);
-            if (proceed.isSuccessful()) {
-                if (LLog.logLevel >= LLog.WARN) {
-                    return proceed;
-                }
-                logResponse(proceed);
-            } else {
-                String message = proceed.message();
-                Log.i("REQUEST", message);
+            if (LLog.logLevel >= LLog.WARN) {
+                return proceed;
             }
+            logResponse(proceed);
             return proceed;
         }
 
@@ -82,14 +77,11 @@ public class HttpClient {
             sb.append("Method:");
             sb.append(request.method()).append("\n");
             Headers headers = request.headers();
+            sb.append("Headers: \n");
             for (int i = 0; i < headers.size(); i++) {
-                sb.append("Headers: ").append(headers.name(i)).append("=").append(headers.value(i));
-                if (i != headers.size() - 1) {
-                    sb.append(", ");
-                }
+                sb.append("\t").append(headers.name(i)).append("=").append(headers.value(i));
+                sb.append("\n");
             }
-            sb.append("\n");
-
             RequestBody body = request.body();
             if (body != null) {
                 sb.append("Content-Type:");
@@ -120,22 +112,14 @@ public class HttpClient {
             sb.append(response.code()).append("\n");
             sb.append("Message:");
             sb.append(response.message()).append("\n");
-            Headers headers = response.headers();
-            sb.append("Headers: ");
-            for (int i = 0; i < headers.size(); i++) {
-                sb.append(headers.name(i)).append("=").append(headers.value(i));
-                if (i != headers.size() - 1) {
-                    sb.append(", ");
-                }
-            }
             sb.append("\n");
             sb.append("Body:");
             try {
-                sb.append(new String(response.peekBody(1024 * 1024).bytes()));
+                sb.append(new String(response.peekBody(1024 * 1024 * 5).bytes()));
             } catch (IOException e) {
                 e.printStackTrace();
             }
-            sb.append("\n······························  ===== SUCCESS =====  ······························");
+            sb.append("\n······························  ===== " + (response.isSuccessful() ? "SUCCESS" : "ERROR") + " =====  ······························");
             Log.i("REQUEST", sb.toString());
         }
     }

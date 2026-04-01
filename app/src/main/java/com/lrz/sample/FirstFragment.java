@@ -110,40 +110,17 @@ public class FirstFragment extends Fragment {
     ReqObservable<String> observable8;
 
     private void emit() {
-        for (int i = 0; i < 10; i++) {
-            final int ii = i;
-            ReqObservable<String> observable3 = CommonRequest.Create(new RequestBuilder<String>() {
+            CommonRequest.Create(new RequestBuilder<String>() {
                 {
-                    url("https://www.baidu.com");
+                    addHeader("Authorization","Bearer 3124|01b566d9ae1b19352b47eca0ffe94976d4f764ae");
+                    url("https://test-go-api.nowmap.cn/api/v1/user/wechat/profile");
                 }
             }).subscribe(Dispatcher.IO, s -> {
-                Log.i("---request:" + ii, "执行" + Thread.currentThread().getName());
+                Log.i("---request:", "执行" + Thread.currentThread().getName());
 
             }).error(error -> {
-                Log.e("---request-error" + ii, "", error);
+                Log.e("---request-error" , "", error);
             }).GET();
-            if (ii == 4) {
-                observable4 = observable3;
-            }
-            if (ii == 8) {
-                observable8 = observable3;
-            }
-        }
-        CoroutineLRZContext.ExecuteDelay(Dispatcher.MAIN, new Runnable() {
-            @Override
-            public void run() {
-                if (observable4 != null) {
-                    observable4.cancel();
-                    observable4 = null;
-                    Log.e("---request-cancel4", "");
-                }
-                if (observable8 != null) {
-                    observable8.cancel();
-                    observable8 = null;
-                    Log.e("---request-cancel8", "");
-                }
-            }
-        }, 50);
     }
 
     private void streamSet() {
