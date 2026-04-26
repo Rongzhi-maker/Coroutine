@@ -66,13 +66,13 @@ public class FirstFragment extends Fragment {
                 };
                 Observable<String> observable = CoroutineLRZContext.Create(emitter).thread(Dispatcher.IO);
                 emitter.next("111");
-                observable.subscribe(Dispatcher.BACKGROUND, new Observer<String>() {
+                observable.subscribe(new Observer<String>() {
                             @Override
                             public void onSubscribe(String s) {
                                 LLog.d("---------------", "1111" + " . " + Thread.currentThread().getName());
                             }
                         })
-                        .subscribe(new Observer<String>() {
+                        .subscribe(Dispatcher.BACKGROUND, new Observer<String>() {
                             @Override
                             public void onSubscribe(String s) {
                                 LLog.d("---------------", "22222" + " . " + Thread.currentThread().getName());
@@ -103,16 +103,32 @@ public class FirstFragment extends Fragment {
     ReqObservable<String> observable8;
 
     private void emit() {
-        CommonRequest.Create(new RequestBuilder<String>() {
+        observable4 = CommonRequest.Create(new RequestBuilder<String>() {
             {
-                url("https://test-go-api.nowmap.cn/api/v1/user/wechat/profile");
+                url("https://www.baidu.com");
             }
-        }).subscribe(Dispatcher.IO, s -> {
-            Log.i("---request:", "执行" + Thread.currentThread().getName());
+        }).method(Method.GET);
+        observable4 = observable4.subscribe(Dispatcher.IO, s -> {
+            Log.i("---request:", "执行1111 。" + Thread.currentThread().getName());
 
-        }).error(error -> {
-            Log.e("---request-error", "", error);
-        }).GET();
+        }).map(new Function<String, String>() {
+            @Override
+            public String apply(String s) {
+                return "xiu gai";
+            }
+        }).execute();
+        binding.buttonBackground.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                observable4.subscribe(Dispatcher.IO, s -> {
+                    Log.i("---request:", s + "执行2222 。" + Thread.currentThread().getName());
+
+                }).error(error -> {
+                    Log.e("---request-error", "", error);
+                });
+            }
+        },2000);
+
     }
 
     private void streamSet() {

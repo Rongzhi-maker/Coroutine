@@ -146,6 +146,15 @@ public class Observable<T> implements Closeable {
     private void dispatchConsequences() {
         Observable preObservable = getPreObservable();
         if (preObservable == null) preObservable = this;
+        // 优先使用当前节点已缓存的结果，避免“实时透传 + 从上游补发”造成重复下发
+        Deque<Consequence<T>> selfResults = getResults();
+        if (selfResults != null) {
+            synchronized (selfResults) {
+                if (!selfResults.isEmpty()) {
+                    preObservable = this;
+                }
+            }
+        }
         Deque<Consequence<T>> consequences;
         if (!isCancel() && (consequences = preObservable.getResults()) != null) {
             LinkedList<Consequence<T>> rs = snapshotDeque(consequences);
@@ -201,8 +210,6 @@ public class Observable<T> implements Closeable {
         Observable<F> observableF = createObservableNode();
         observableF.preObservable = this;
         this.nextObservable = observableF;
-        observableF.observer = f -> {
-        };
         //如果自己没有。则拿上一个ob中的数据来补发给现在的ob
         dispatchConsequences();
         return observableF;
@@ -527,8 +534,8 @@ public class Observable<T> implements Closeable {
         if (!isCancel() && getInterval() <= 0 && (deque = getResults()) != null) {
             offerWithDropOldest(deque, new Consequence<>(t));
         }
-        //如果当前还没有订阅，不执行了，等发生订阅时再补
-        if (getObserver() == null) {
+        // 没有订阅者且没有下游时，不需要继续分发；有下游时仍需透传
+        if (getObserver() == null && nextObservable == null) {
             return;
         }
         Dispatcher dispatcher = this.dispatcher;
