@@ -9,7 +9,7 @@ import com.lrz.coroutine.flow.Observable;
 import com.lrz.coroutine.flow.Observer;
 import com.lrz.coroutine.flow.Task;
 
-import java.util.concurrent.LinkedBlockingDeque;
+import java.util.Deque;
 
 import okhttp3.Call;
 import okhttp3.OkHttpClient;
@@ -105,7 +105,7 @@ public class ReqObservable<T> extends Observable<T> {
             if (taskDispatcher == null) {
                 taskDispatcher = hasSubscriber() ? Dispatcher.IO : Dispatcher.BACKGROUND;
             }
-            LinkedBlockingDeque<OBJBox<Dispatcher, IError<Throwable>>> errors = getErrors();
+            Deque<OBJBox<Dispatcher, IError<Throwable>>> errors = getErrors();
             if (errors == null || errors.isEmpty()) {
                 error(new DefReqError());
             }
@@ -158,6 +158,11 @@ public class ReqObservable<T> extends Observable<T> {
     @Override
     protected synchronized ReqObservable<T> map() {
         return (ReqObservable<T>) super.map();
+    }
+
+    @Override
+    protected <F> Observable<F> createObservableNode() {
+        return new ReqObservable<>();
     }
 
     private boolean hasSubscriber() {

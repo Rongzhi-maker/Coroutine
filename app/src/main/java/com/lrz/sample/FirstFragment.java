@@ -51,6 +51,7 @@ public class FirstFragment extends Fragment {
 
     public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
+        CoroutineLRZContext.SetStackTraceExtraEnable(true);
         binding.buttonFirst.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -63,30 +64,22 @@ public class FirstFragment extends Fragment {
             public void onClick(View v) {
                 Emitter<String> emitter = new Emitter<String>() {
                 };
-                Observable<String> observable = CoroutineLRZContext.Create(emitter).subscribe(new Observer<String>() {
-                    @Override
-                    public void onSubscribe(String s) {
-                        LLog.d("=========","发射器："+s);
-                    }
-                });
-                Observable<String> observable2 = CoroutineLRZContext.Create(new Task<String>() {
-                    @Override
-                    public String submit() {
-                        return "普通任务";
-                    }
-                }).thread(Dispatcher.IO).delay(1000);
-                ObservableSet.CreateAnd(observable,observable2).subscribe(new Observer<Integer>() {
-                    @Override
-                    public void onSubscribe(Integer integer) {
-                        LLog.d("=========","事件总线结束："+integer);
-                    }
-                }).error(new IError() {
-                    @Override
-                    public void onError(Throwable error) {
-                        LLog.d("=========","事件总线错误："+error.getMessage());
-                    }
-                }).execute();
-                emitter.next("发射");
+                Observable<String> observable = CoroutineLRZContext.Create(emitter).thread(Dispatcher.IO);
+                emitter.next("111");
+                observable.subscribe(Dispatcher.BACKGROUND, new Observer<String>() {
+                            @Override
+                            public void onSubscribe(String s) {
+                                LLog.d("---------------", "1111" + " . " + Thread.currentThread().getName());
+                            }
+                        })
+                        .subscribe(new Observer<String>() {
+                            @Override
+                            public void onSubscribe(String s) {
+                                LLog.d("---------------", "22222" + " . " + Thread.currentThread().getName());
+                            }
+                        })
+                ;
+
             }
         });
 
@@ -110,17 +103,16 @@ public class FirstFragment extends Fragment {
     ReqObservable<String> observable8;
 
     private void emit() {
-            CommonRequest.Create(new RequestBuilder<String>() {
-                {
-                    addHeader("Authorization","Bearer 3124|01b566d9ae1b19352b47eca0ffe94976d4f764ae");
-                    url("https://test-go-api.nowmap.cn/api/v1/user/wechat/profile");
-                }
-            }).subscribe(Dispatcher.IO, s -> {
-                Log.i("---request:", "执行" + Thread.currentThread().getName());
+        CommonRequest.Create(new RequestBuilder<String>() {
+            {
+                url("https://test-go-api.nowmap.cn/api/v1/user/wechat/profile");
+            }
+        }).subscribe(Dispatcher.IO, s -> {
+            Log.i("---request:", "执行" + Thread.currentThread().getName());
 
-            }).error(error -> {
-                Log.e("---request-error" , "", error);
-            }).GET();
+        }).error(error -> {
+            Log.e("---request-error", "", error);
+        }).GET();
     }
 
     private void streamSet() {

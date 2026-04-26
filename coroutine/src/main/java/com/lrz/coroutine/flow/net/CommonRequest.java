@@ -29,6 +29,7 @@ public class CommonRequest {
     // 至少并发5，超过5核手机并发数量是核心数量
     public static volatile int MAX_REQUEST = (int) Math.max(Runtime.getRuntime().availableProcessors() * 0.8f, 5);
     static volatile int requestNum = 0;
+    private static final MediaType JSON_MEDIA_TYPE = MediaType.parse("application/json; charset=utf-8");
     //预解析字段，可将 自定义的code归类到错误中
     // code的值不等于200，则表示服务获取失败
     private String codeStr;
@@ -202,85 +203,84 @@ public class CommonRequest {
             }
             requestNum += 1;
         }
-        Call call;
-        Response response;
+        Call call = mOkHttp.newCall(builder.tag(tag).build());
         try {
-            call = mOkHttp.newCall(builder.tag(tag).build());
-            response = call.execute();
-            synchronized (RequestBuilder.REQUEST_BUILDERS) {
-                requestNum -= 1;
-            }
-        } catch (Exception e) {
-            synchronized (RequestBuilder.REQUEST_BUILDERS) {
-                requestNum -= 1;
-            }
-            throw new RequestException("Network exception, please check the network! or look at Caused by ...", e, ResponseCode.CODE_ERROR_NO_NET);
-        }
-        ResponseBody body = response.body();
-        if (body != null) {
-            if (response.isSuccessful()) {
-                final String json;
-                try {
-                    json = body.string();
-                } catch (IOException e) {
-                    throw new RequestException("response.body stream read error! or look at Caused by ...", e, ResponseCode.CODE_ERROR_IO);
+            try (Response response = call.execute()) {
+                ResponseBody body = response.body();
+                if (body == null) {
+                    throw new RequestException("No data requested!", ResponseCode.CODE_ERROR_RESPONSE_NULL);
                 }
-                // 尝试预解析 code 和msg 字段
-                if (dClass != String.class && dClass != null) {
-                    if (codeStr != null && msgStr != null) {
-                        try {
-                            JSONObject jo = new JSONObject(json);
-                            int code = jo.getInt(codeStr);
-                            if (code != 0) {
-                                String msg = jo.getString(msgStr);
-                                CodeInterceptor interceptor = codeInterceptors.get(code);
-                                if (interceptor != null) {
-                                    interceptor.onInterceptor(json, msg);
+                if (response.isSuccessful()) {
+                    final String json;
+                    try {
+                        json = body.string();
+                    } catch (IOException e) {
+                        throw new RequestException("response.body stream read error! or look at Caused by ...", e, ResponseCode.CODE_ERROR_IO);
+                    }
+                    // 尝试预解析 code 和msg 字段
+                    if (dClass != String.class && dClass != null) {
+                        if (codeStr != null && msgStr != null) {
+                            try {
+                                JSONObject jo = new JSONObject(json);
+                                int code = jo.getInt(codeStr);
+                                if (code != 0) {
+                                    String msg = jo.getString(msgStr);
+                                    CodeInterceptor interceptor = codeInterceptors.get(code);
+                                    if (interceptor != null) {
+                                        interceptor.onInterceptor(json, msg);
+                                    }
+                                    throw new RequestException(msg, code);
                                 }
-                                throw new RequestException(msg, code);
+                            } catch (JSONException e) {
+                                throw new RequestException("code or msg in json decode error! or look at Caused by ...", e, ResponseCode.CODE_ERROR_JSON_FORMAT);
                             }
-                        } catch (JSONException e) {
-                            throw new RequestException("code or msg in json decode error! or look at Caused by ...", e, ResponseCode.CODE_ERROR_JSON_FORMAT);
                         }
                     }
-                }
-                if (dClass == String.class || dClass == null) {
-                    return (D) json;
+                    if (dClass == String.class || dClass == null) {
+                        return (D) json;
+                    } else {
+                        try {
+                            return GSON.fromJson(json, dClass);
+                        } catch (Exception e) {
+                            throw new RequestException("json decode error! or look at Caused by ...", e, ResponseCode.CODE_ERROR_JSON_FORMAT);
+                        }
+                    }
                 } else {
                     try {
-                        return GSON.fromJson(json, dClass);
-                    } catch (Exception e) {
-                        throw new RequestException("json decode error! or look at Caused by ...", e, ResponseCode.CODE_ERROR_JSON_FORMAT);
-                    }
-                }
-            } else {
-                try {
-                    String json = body.string();
-                    if (codeStr != null && msgStr != null) {
-                        try {
-                            JSONObject jo = new JSONObject(json);
-                            int code = jo.getInt(codeStr);
-                            if (code != 0) {
-                                String msg = jo.getString(msgStr);
-                                CodeInterceptor interceptor = codeInterceptors.get(code);
-                                if (interceptor != null) {
-                                    interceptor.onInterceptor(json, msg);
+                        String json = body.string();
+                        if (codeStr != null && msgStr != null) {
+                            try {
+                                JSONObject jo = new JSONObject(json);
+                                int code = jo.getInt(codeStr);
+                                if (code != 0) {
+                                    String msg = jo.getString(msgStr);
+                                    CodeInterceptor interceptor = codeInterceptors.get(code);
+                                    if (interceptor != null) {
+                                        interceptor.onInterceptor(json, msg);
+                                    }
+                                    RequestException innerException = new RequestException(msg, response.code());
+                                    throw new RequestException("Request Error, the http code=" + response.code() + ",code=" + code + ",msg=" + msg, innerException, code);
                                 }
-                                RequestException innerException = new RequestException(msg, response.code());
-                                throw new RequestException("Request Error, the http code=" + response.code() + ",code=" + code + ",msg=" + msg, innerException, code);
+                            } catch (JSONException e) {
+                                throw new RequestException("Request Error, the http code=" + response.code() + ",data=" + json, e, response.code());
                             }
-                        } catch (JSONException e) {
-                            throw new RequestException("Request Error, the http code=" + response.code() + ",data=" + json, e, response.code());
                         }
+                    } catch (IOException e) {
+                        throw new RequestException("Request Error, the http code=" + response.code(), e, response.code());
                     }
-                } catch (IOException e) {
-                    body.close();
-                    throw new RequestException("Request Error, the http code=" + response.code(), e, response.code());
+                    throw new RequestException("Request Error, the http code=" + response.code(), response.code());
                 }
-                throw new RequestException("Request Error, the http code=" + response.code(), response.code());
             }
-        } else {
-            throw new RequestException("No data requested!", ResponseCode.CODE_ERROR_RESPONSE_NULL);
+        } catch (Exception e) {
+            if (e instanceof RequestException) {
+                throw (RequestException) e;
+            }
+            throw new RequestException("Network exception, please check the network! or look at Caused by ...", e, ResponseCode.CODE_ERROR_NO_NET);
+        } finally {
+            synchronized (RequestBuilder.REQUEST_BUILDERS) {
+                requestNum -= 1;
+                if (requestNum < 0) requestNum = 0;
+            }
         }
     }
 
@@ -292,7 +292,7 @@ public class CommonRequest {
         if (httpUrl == null) {
             throw new RequestException("url parse error,please check you url", ResponseCode.CODE_ERROR_URL_ILLEGAL);
         }
-        RequestBody requestBody = FormBody.create(MediaType.parse("application/json; charset=utf-8"), json);
+        RequestBody requestBody = RequestBody.create(json, JSON_MEDIA_TYPE);
 
         HttpUrl.Builder httpBuilder = httpUrl.newBuilder();
         if (urlParams != null) {
