@@ -86,8 +86,6 @@ public class FirstFragment extends Fragment {
         binding.buttonMain.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-//                streamSet();
-                steam();
             }
         });
 
@@ -127,7 +125,7 @@ public class FirstFragment extends Fragment {
                     Log.e("---request-error", "", error);
                 });
             }
-        },2000);
+        }, 2000);
 
     }
 
