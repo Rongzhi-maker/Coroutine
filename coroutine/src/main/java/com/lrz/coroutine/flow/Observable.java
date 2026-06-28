@@ -6,7 +6,11 @@ import com.lrz.coroutine.handler.CoroutineLRZContext;
 import com.lrz.coroutine.handler.Job;
 
 import java.io.Closeable;
+import java.util.ArrayDeque;
 import java.util.Arrays;
+import java.util.Deque;
+import java.util.LinkedList;
+import java.util.concurrent.LinkedBlockingDeque;
 
 /**
  * Author:  liurongzhi
@@ -14,16 +18,15 @@ import java.util.Arrays;
  * Description:
  */
 public class Observable<T> implements Closeable {
+    private static final int MAX_CACHE_SIZE = 5;
     // 观察者线程
     protected Dispatcher dispatcher;
     // 执行者线程
     protected Dispatcher taskDispatcher;
     protected volatile Task<T> task;
-    protected Observer<T> result;
+    protected volatile Observer<T> observer;
     protected Function<T, ?> map;
-    private IError<Throwable> error;
-    // 错误回调线程
-    protected Dispatcher errorDispatcher;
+    private final Deque<OBJBox<Dispatcher, IError<Throwable>>> errors = new ArrayDeque<>(MAX_CACHE_SIZE);
     protected volatile Job job;
     // 延迟时间
     protected long delay = -1;
@@ -31,31 +34,40 @@ public class Observable<T> implements Closeable {
     protected long interval = -1;
     // 任务是否已经关闭
     private volatile boolean isCancel = false;
+
+    /**
+     * 每个obs响应的结果记录，每个obs 都有一份
+     * 为什么：每个obs 的类型可能不同（受map影响）
+     */
+
+    Deque<Consequence<T>> results = new ArrayDeque<>(MAX_CACHE_SIZE);
+    protected LinkedBlockingDeque<Throwable> troubles;
     /**
      * 双向链表结构，用于管理责任链中的 Observable，当使用map 函数时，会生成链表
      */
-    protected volatile Observable preObservable;
-    protected volatile Observable nextObservable;
+    protected volatile Observable<?> preObservable;
+    protected volatile Observable<?> nextObservable;
 
     public Observable(Task<T> task) {
         if (task == null) {
             throw new NullPointerException("task can not be null!");
         }
+        troubles = new LinkedBlockingDeque<>();
         this.task = task;
     }
 
     protected Observable() {
     }
 
-    public Observer<T> getResult() {
-        return result;
+    public Observer<T> getObserver() {
+        return observer;
     }
 
-    public Observable getPreObservable() {
+    public Observable<?> getPreObservable() {
         return preObservable;
     }
 
-    public Observable getNextObservable() {
+    public Observable<?> getNextObservable() {
         return nextObservable;
     }
 
@@ -77,12 +89,112 @@ public class Observable<T> implements Closeable {
      * @return 任务描述
      */
     public synchronized Observable<T> subscribe(Dispatcher dispatcher, Observer<T> result) {
-        if (this.result != null) {
-            return map().subscribe(dispatcher, result);
+        if (this.observer != null) {
+            return mapInner().subscribe(dispatcher, result);
         } else {
             this.dispatcher = dispatcher;
-            this.result = result;
+            this.observer = result;
+            //如果自己没有。则拿上一个ob中的数据来补发给现在的ob
+            dispatchConsequences();
             return this;
+        }
+    }
+
+    public String tag;
+
+    public synchronized Observable<T> subscribe(Dispatcher dispatcher, Observer<T> result, String tag) {
+        if (this.observer != null) {
+            return mapInner().subscribe(dispatcher, result, tag);
+        } else {
+            this.tag = tag;
+            this.dispatcher = dispatcher;
+            this.observer = result;
+            //如果自己没有。则拿上一个ob中的数据来补发给现在的ob
+            dispatchConsequences();
+            return this;
+        }
+    }
+
+    private static <E> void offerWithDropOldest(Deque<E> deque, E value) {
+        if (deque == null) return;
+        synchronized (deque) {
+            if (deque.size() >= MAX_CACHE_SIZE) {
+                deque.pollFirst();
+            }
+            deque.offerLast(value);
+        }
+    }
+
+    private static <E> LinkedList<E> snapshotDeque(Deque<E> deque) {
+        if (deque == null) {
+            return new LinkedList<>();
+        }
+        synchronized (deque) {
+            return new LinkedList<>(deque);
+        }
+    }
+
+    /**
+     * 创建责任链中的下一个节点，默认实现返回基础 Observable。
+     * 子类可以复写该方法，避免 map 时依赖反射创建实例。
+     */
+    protected <F> Observable<F> createObservableNode() {
+        return new Observable<>();
+    }
+
+
+    private void dispatchConsequences() {
+        Observable preObservable = getPreObservable();
+        if (preObservable == null) preObservable = this;
+        // 优先使用当前节点已缓存的结果，避免“实时透传 + 从上游补发”造成重复下发
+        Deque<Consequence<T>> selfResults = getResults();
+        if (selfResults != null) {
+            synchronized (selfResults) {
+                if (!selfResults.isEmpty()) {
+                    preObservable = this;
+                }
+            }
+        }
+        Deque<Consequence<T>> consequences;
+        if (!isCancel() && (consequences = preObservable.getResults()) != null) {
+            LinkedList<Consequence<T>> rs = snapshotDeque(consequences);
+            if (!rs.isEmpty()) {
+                Dispatcher dis = getDispatcher();
+                if (dis == null) dis = getTaskDispatch();
+                Observable finalPreObservable = preObservable;
+                Observable finalNextObservable = preObservable.nextObservable;
+                if (dis != null) {
+                    CoroutineLRZContext.INSTANCE.execute(dis, () -> {
+                        for (Consequence<T> o : rs) {
+                            if (isCancel()) break;
+                            try {
+                                if (finalPreObservable != this) {
+                                    finalPreObservable.dispatchNext(o.t);
+                                } else {
+                                    finalPreObservable.dispatchSubscribeSelf((T) o.t);
+                                    if (finalNextObservable != null)
+                                        finalNextObservable.dispatchNext(o.t);
+                                }
+                            } catch (Exception e) {
+                                dispatchError(e);
+                            }
+                        }
+                    });
+                } else {
+                    for (Consequence<T> o : rs) {
+                        if (isCancel()) break;
+                        try {
+                            if (finalPreObservable != this) {
+                                finalPreObservable.dispatchNext(o.t);
+                            } else {
+                                finalPreObservable.dispatchSubscribe((T) o.t);
+                            }
+                        } catch (Exception e) {
+                            dispatchError(e);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -95,14 +207,20 @@ public class Observable<T> implements Closeable {
      */
     public synchronized <F> Observable<F> map(Function<T, F> function) {
         this.map = function;
-        Observable<F> observableF = null;
-        try {
-            observableF = this.getClass().newInstance();
-            observableF.preObservable = this;
-            nextObservable = observableF;
-        } catch (Exception e) {
-            dispatchError(e);
-        }
+        Observable<F> observableF = createObservableNode();
+        observableF.preObservable = this;
+        this.nextObservable = observableF;
+        //如果自己没有。则拿上一个ob中的数据来补发给现在的ob
+        dispatchConsequences();
+        return observableF;
+    }
+
+
+    protected synchronized Observable<T> mapInner() {
+        //创建新的节点
+        Observable<T> observableF = createObservableNode();
+        observableF.preObservable = this;
+        this.nextObservable = observableF;
         return observableF;
     }
 
@@ -135,13 +253,26 @@ public class Observable<T> implements Closeable {
     public synchronized Observable<T> error(Dispatcher dispatcher, IError error) {
         Observable<?> observable = this;
         while (observable != null) {
-            if (observable.task != null) {
-                observable.error = error;
-                observable.errorDispatcher = dispatcher;
-                break;
-            } else if (observable.preObservable == null) {
-                observable.error = error;
-                observable.errorDispatcher = dispatcher;
+            if (observable.task != null || observable.preObservable == null) {
+                offerWithDropOldest(observable.errors, new OBJBox<Dispatcher, IError<Throwable>>(dispatcher, error));
+                LinkedBlockingDeque<Throwable> troubles;
+                if (!isCancel() && (troubles = getTroubles()) != null) {
+                    LinkedList<Throwable> th = new LinkedList<>(troubles);
+                    //拿上一个ob中的数据来补发给现在的ob
+                    for (Throwable throwable : th) {
+                        // 向链表上游获取就近的观察者线程
+                        if (dispatcher == null) dispatcher = getDispatcher();
+                        if (dispatcher == null) dispatcher = getTaskDispatch();
+                        if (dispatcher != null) {
+                            CoroutineLRZContext.INSTANCE.execute(dispatcher, () -> {
+                                if (isCancel()) return;
+                                error.onError(throwable);
+                            });
+                        } else {
+                            error.onError(throwable);
+                        }
+                    }
+                }
                 break;
             }
             observable = observable.preObservable;
@@ -214,15 +345,6 @@ public class Observable<T> implements Closeable {
         return null;
     }
 
-    public Dispatcher getErrorDispatcher() {
-        Observable<?> observable = this;
-        while (observable != null) {
-            if (observable.errorDispatcher != null) return observable.errorDispatcher;
-            observable = observable.preObservable;
-        }
-        return null;
-    }
-
     /**
      * 获取任务延迟时间
      *
@@ -256,10 +378,10 @@ public class Observable<T> implements Closeable {
      * 在当前线程执行，该线程可能是thread()设置的，如果是null，则不执行
      */
     public synchronized Observable<T> execute() {
-        if (task == null && preObservable != null) {
-            preObservable.execute();
-            return this;
-        }
+        //如果是发射器类型，则不主动执行，等到外部调用发射器发射结果事件即可
+        Task<?> task = getTask();
+        if (task instanceof Emitter) return this;
+
         if (task == null) return this;
         Dispatcher dispatcher = getTaskDispatch();
         if (dispatcher == null) return this;
@@ -282,14 +404,7 @@ public class Observable<T> implements Closeable {
      */
     public synchronized Observable<T> execute(Dispatcher dispatcher) {
         thread(dispatcher);
-        if (task == null && preObservable != null) {
-            preObservable.execute(dispatcher);
-            return this;
-        }
-        if (task != null) {
-            job = CoroutineLRZContext.INSTANCE.execute(dispatcher, task);
-        }
-        return this;
+        return execute();
     }
 
     /**
@@ -301,14 +416,7 @@ public class Observable<T> implements Closeable {
     public synchronized Observable<T> executeDelay(Dispatcher dispatcher, long delay) {
         thread(dispatcher);
         delay(delay);
-
-        if (task == null && preObservable != null) {
-            preObservable.executeDelay(dispatcher,delay);
-            return this;
-        }
-        if (task != null)
-            job = CoroutineLRZContext.INSTANCE.executeDelay(dispatcher, task, delay);
-        return this;
+        return execute();
     }
 
     /**
@@ -319,16 +427,8 @@ public class Observable<T> implements Closeable {
      */
     public synchronized Observable<T> executeTime(Dispatcher dispatcher, long interval) {
         thread(dispatcher);
-        interval(delay);
-
-        if (task == null && preObservable != null) {
-            preObservable.executeTime(dispatcher,interval);
-            return this;
-        }
-
-        if (task != null)
-            job = CoroutineLRZContext.INSTANCE.executeTime(dispatcher, task, interval);
-        return this;
+        interval(interval);
+        return execute();
     }
 
     /**
@@ -337,25 +437,45 @@ public class Observable<T> implements Closeable {
      * @return
      */
     protected synchronized Task<?> getTask() {
-        Observable pre = preObservable;
-        if (pre != null) {
-            return pre.getTask();
+        Observable<?> pre = this;
+        while (pre != null) {
+            if (pre.task != null) return pre.task;
+            pre = pre.preObservable;
         }
         return task;
     }
 
-    protected synchronized IError<Throwable> getError() {
-        Observable pre = preObservable;
-        if (pre != null) {
-            return pre.getError();
+    protected synchronized Deque<OBJBox<Dispatcher, IError<Throwable>>> getErrors() {
+        Observable<?> pre = this;
+        while (pre != null) {
+            if (pre.preObservable == null) return pre.errors;
+            pre = pre.preObservable;
         }
-        return error;
+        return null;
     }
 
+    public synchronized Deque<Consequence<T>> getResults() {
+        return results;
+    }
+
+    public synchronized LinkedBlockingDeque<Throwable> getTroubles() {
+        Observable<?> pre = this;
+        while (pre != null) {
+            //拿第一个Observable，因为results都放在第一里面
+            if (pre.preObservable != null) {
+                pre = pre.preObservable;
+                continue;
+            }
+            return pre.troubles;
+        }
+        return null;
+    }
+
+
     protected void onError(Throwable e) {
-        if (isCancel) return;
-        IError error = this.error;
-        Task task = getTask();
+        if (isCancel()) return;
+        Deque<OBJBox<Dispatcher, IError<Throwable>>> errors = getErrors();
+        Task<?> task = getTask();
         if (task != null) {
             StackTraceElement[] stackTraceExtra = task.getStackTraceExtra();
             if (stackTraceExtra != null) {
@@ -366,18 +486,41 @@ public class Observable<T> implements Closeable {
                 e.setStackTrace(stackTraceElements);
             }
         }
-        if (error != null) {
-            Dispatcher dispatcher = getErrorDispatcher();
-            // 向链表上游获取就近的观察者线程
-            if (dispatcher == null) dispatcher = getDispatcher();
-            if (dispatcher == null) {
-                error.onError(e);
-            } else {
-                CoroutineLRZContext.INSTANCE.execute(dispatcher, () -> error.onError(e));
+        if (errors != null && !errors.isEmpty()) {
+            for (OBJBox<Dispatcher, IError<Throwable>> errorOBJ : snapshotDeque(errors)) {
+                IError<Throwable> error = errorOBJ.o2;
+                if (error != null) {
+                    Dispatcher dispatcher = errorOBJ.o1;
+                    if (dispatcher == null) dispatcher = getDispatcher();
+                    if (dispatcher == null) dispatcher = getTaskDispatch();
+                    if (dispatcher == null) {
+                        error.onError(e);
+                        LinkedBlockingDeque<Throwable> troubles;
+                        if (!isCancel() && getInterval() <= 0 && (troubles = getTroubles()) != null)
+                            troubles.offerLast(e);
+                    } else {
+                        CoroutineLRZContext.INSTANCE.execute(dispatcher, () -> {
+                            if (isCancel()) return;
+                            error.onError(e);
+                            LinkedBlockingDeque<Throwable> troubles;
+                            if (!isCancel() && getInterval() <= 0 && (troubles = getTroubles()) != null)
+                                troubles.offerLast(e);
+                        });
+                    }
+                }
             }
         } else {
-            throw new CoroutineFlowException("coroutine inner error,look at Cause By...", e);
+            LinkedBlockingDeque<Throwable> troubles;
+            if (!isCancel() && getInterval() <= 0 && (troubles = getTroubles()) != null)
+                troubles.offerLast(e);
+            Function<Throwable, Boolean> handler = CoroutineLRZContext.GetEscapeHandler();
+            //如果外部不处理，则抛出异常
+            if ((handler != null && !handler.apply(e)) || !CoroutineLRZContext.IsIgnoreCrash()) {
+                if (e instanceof RuntimeException) throw (RuntimeException) e;
+                throw new CoroutineFlowException("coroutine inner error,look at:", e);
+            } else LLog.e("COROUTINE_OBS", "coroutine inner error,look at:", e);
         }
+
     }
 
     /**
@@ -385,56 +528,75 @@ public class Observable<T> implements Closeable {
      *
      * @param t 结果
      */
-    void onSubscribe(T t) {
-        Observer<T> result = this.result;
-        if (result != null) {
-            if (dispatcher == null) {
-                result.onSubscribe(t);
-                Observable observable = nextObservable;
-                if (observable != null) {
-                    Function<T, ?> function = map;
-                    if (function != null) {
-                        observable.onSubscribe(map.apply(t));
-                    } else {
-                        observable.onSubscribe(t);
-                    }
-                }
-            } else {
-                CoroutineLRZContext.INSTANCE.execute(dispatcher, () -> {
-                    try {
-                        result.onSubscribe(t);
-                        Observable observable = nextObservable;
-                        if (observable != null) {
-                            Function<T, ?> function = map;
-                            if (function != null) {
-                                observable.onSubscribe(map.apply(t));
-                            } else {
-                                observable.onSubscribe(t);
-                            }
-                        }
-                    } catch (Exception e) {
-                        dispatchError(e);
-                    }
-                });
-            }
+    protected void onSubscribe(T t) {
+        //先把结果存一下，防止丢失
+        Deque<Consequence<T>> deque;
+        if (!isCancel() && getInterval() <= 0 && (deque = getResults()) != null) {
+            offerWithDropOldest(deque, new Consequence<>(t));
+        }
+        // 没有订阅者且没有下游时，不需要继续分发；有下游时仍需透传
+        if (getObserver() == null && nextObservable == null) {
+            return;
+        }
+        Dispatcher dispatcher = this.dispatcher;
+        //如果是第一个观察者，且没有指定线程
+        if (preObservable == null && dispatcher == null) {
+            dispatcher = getTaskDispatch();
+        }
+        if (dispatcher == null) {
+            dispatchSubscribeSafely(t);
         } else {
-            Observable observable = nextObservable;
-            if (observable != null) {
-                Function<T, ?> function = map;
-                if (function != null) {
-                    observable.onSubscribe(map.apply(t));
-                } else {
-                    observable.onSubscribe(t);
-                }
+            CoroutineLRZContext.INSTANCE.execute(dispatcher, () -> {
+                dispatchSubscribeSafely(t);
+            });
+        }
+    }
+
+    /**
+     * 统一订阅分发入口，保证异步回调在执行前检查取消状态。
+     */
+    private void dispatchSubscribeSafely(T t) {
+        if (isCancel()) return;
+        try {
+            dispatchSubscribe(t);
+        } catch (Exception e) {
+            dispatchError(e);
+        }
+    }
+
+    private void dispatchSubscribe(T t) {
+        if (isCancel()) return;
+        Observer<T> observer = this.observer;
+        if (observer != null) {
+            observer.onSubscribe(t);
+        }
+        dispatchNext(t);
+    }
+
+    private void dispatchSubscribeSelf(T t) {
+        if (isCancel()) return;
+        Observer<T> observer = this.observer;
+        if (observer != null) {
+            observer.onSubscribe(t);
+        }
+    }
+
+    private void dispatchNext(T t) {
+        Observable observable = nextObservable;
+        if (observable != null) {
+            Function<T, ?> function = map;
+            if (function != null) {
+                observable.onSubscribe(map.apply(t));
+            } else {
+                observable.onSubscribe(t);
             }
         }
     }
 
     private void dispatchError(Throwable e) {
-        Observable observable = this;
-        while (observable.error == null) {
-            observable = preObservable;
-            if (observable == null) return;
+        Observable<?> observable = this;
+        while (observable.preObservable != null) {
+            observable = observable.preObservable;
         }
         observable.onError(e);
     }
@@ -446,16 +608,22 @@ public class Observable<T> implements Closeable {
      * 思考，如果当前observable 处在任务流中间呢，应该如果处置
      */
     public synchronized void cancel() {
-        if (isCancel) return;
+        if (isCancel()) return;
+        // 提前设置取消状态，缩小在途回调继续分发的窗口
+        isCancel = true;
         if (job != null) {
             job.cancel();
             job = null;
             LLog.d("COROUTINE_OBS", "observable stream close");
         }
-        task = null;
-        map = null;
-        error = null;
-        result = null;
+        if (results != null) {
+            synchronized (results) {
+                results.clear();
+            }
+        }
+        if (troubles != null) {
+            troubles.clear();
+        }
         //向上递归取消
         Observable<?> observable = preObservable;
         if (observable != null) {
@@ -463,16 +631,21 @@ public class Observable<T> implements Closeable {
             observable.nextObservable = null;
             observable.cancel();
         }
-        preObservable = null;
-
         Observable<?> next = nextObservable;
         if (next != null) {
             //断开双向链表
             next.preObservable = null;
             next.cancel();
         }
+
         nextObservable = null;
-        isCancel = true;
+        preObservable = null;
+        task = null;
+        map = null;
+        synchronized (errors) {
+            errors.clear();
+        }
+        observer = null;
     }
 
     @Override
@@ -480,7 +653,9 @@ public class Observable<T> implements Closeable {
         cancel();
     }
 
-
+    public synchronized boolean isCancel() {
+        return isCancel;
+    }
 
     protected synchronized Observable<T> GET() {
         return this;

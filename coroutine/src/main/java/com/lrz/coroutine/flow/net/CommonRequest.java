@@ -2,8 +2,10 @@ package com.lrz.coroutine.flow.net;
 
 import android.os.Looper;
 import android.text.TextUtils;
+import android.util.SparseArray;
 
 import com.google.gson.Gson;
+
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -24,39 +26,85 @@ import okhttp3.ResponseBody;
  * Description: http请求类
  */
 public class CommonRequest {
+    // 至少并发5，超过5核手机并发数量是核心数量
+    public static volatile int MAX_REQUEST = (int) Math.max(Runtime.getRuntime().availableProcessors() * 0.8f, 5);
+    static volatile int requestNum = 0;
+    private static final MediaType JSON_MEDIA_TYPE = MediaType.parse("application/json; charset=utf-8");
     //预解析字段，可将 自定义的code归类到错误中
     // code的值不等于200，则表示服务获取失败
-    private static String codeStr;
-    private static String msgStr;
+    private String codeStr;
+    private String msgStr;
     private static final Gson GSON = new Gson();
+    SparseArray<CodeInterceptor> codeInterceptors = new SparseArray<>();
 
     /**
      * 设置设置预解析的code字段
      */
-    public static void setCodeStr(String codeStr) {
-        CommonRequest.codeStr = codeStr;
+    public static void SetCodeStr(String codeStr) {
+        CommonRequest.request.codeStr = codeStr;
     }
 
     /**
      * 设置设置预解析的message字段
      */
-    public static void setMsgStr(String msgStr) {
-        CommonRequest.msgStr = msgStr;
+    public static void SetMsgStr(String msgStr) {
+        CommonRequest.request.msgStr = msgStr;
     }
 
+    public void setCodeStr(String codeStr) {
+        this.codeStr = codeStr;
+    }
+
+    public void setMsgStr(String msgStr) {
+        this.msgStr = msgStr;
+    }
+
+    /**
+     * 注册异常code拦截器
+     */
+    public static void RegisterCodeInterceptor(int code, CodeInterceptor interceptor) {
+        CommonRequest.request.codeInterceptors.put(code, interceptor);
+    }
+
+    public void registerCodeInterceptor(int code, CodeInterceptor interceptor) {
+        codeInterceptors.put(code, interceptor);
+    }
+
+    /**
+     * 使用默认实例创建任务
+     *
+     * @param task 任务
+     * @param <T>  范型
+     * @return 返回任务观察者
+     */
     public static <T> ReqObservable<T> Create(RequestBuilder<T> task) {
+        return request.create(task);
+    }
+
+    /**
+     * 创建任务
+     *
+     * @param task 任务
+     * @param <T>  范型
+     * @return 返回任务观察者
+     */
+    public <T> ReqObservable<T> create(RequestBuilder<T> task) {
         ReqObservable<T> observable;
         observable = new ReqObservable<>(task);
+        task.setRequest(this);
         task.setObservable(observable);
         return observable;
     }
-
 
     public static final CommonRequest request = new CommonRequest(HttpClient.instance.getClient());
     private final OkHttpClient client;
 
     public CommonRequest(OkHttpClient client) {
         this.client = client;
+    }
+
+    public OkHttpClient getClient() {
+        return client;
     }
 
     public <D> D requestGet(String url, Class<D> dClass) throws RequestException {
@@ -73,10 +121,9 @@ public class CommonRequest {
 
 
     public <D> D requestGet(final String url, final Map<String, String> params, Class<D> dClass, Map<String, String> header, int tag) throws RequestException {
-        if (url == null || url.length() < 1) {
+        if (url == null || url.isEmpty()) {
             throw new RequestException("url is illegal,please check you url", ResponseCode.CODE_ERROR_URL_ILLEGAL);
         }
-        OkHttpClient mOkHttp = client;
         HttpUrl httpUrl = HttpUrl.parse(url);
         if (httpUrl == null) {
             throw new RequestException("url parse error,please check you url", ResponseCode.CODE_ERROR_URL_ILLEGAL);
@@ -99,7 +146,7 @@ public class CommonRequest {
             }
         }
         builder.url(httpBuilder.build());
-        return execute(mOkHttp, builder, dClass, tag);
+        return execute(client, builder, dClass, tag);
     }
 
     public String requestPost(final String url, Map<String, String> params) throws RequestException {
@@ -115,11 +162,10 @@ public class CommonRequest {
     }
 
     public <D> D requestPost(final String url, Map<String, String> params, Class<D> dClass, Map<String, String> header, int tag) throws RequestException {
-        if (url == null || url.length() < 1) {
+        if (url == null || url.isEmpty()) {
             throw new RequestException("url is illegal,please check you url", ResponseCode.CODE_ERROR_URL_ILLEGAL);
         }
 
-        OkHttpClient mOkHttp = client;
         HttpUrl httpUrl = HttpUrl.parse(url);
         if (httpUrl == null) {
             throw new RequestException("url parse error,please check you url", ResponseCode.CODE_ERROR_URL_ILLEGAL);
@@ -144,71 +190,109 @@ public class CommonRequest {
                 }
             }
         }
-        return execute(mOkHttp, builder, dClass, tag);
+        return execute(client, builder, dClass, tag);
     }
 
     private <D> D execute(OkHttpClient mOkHttp, okhttp3.Request.Builder builder, Class<D> dClass, int tag) throws RequestException {
         if (Looper.getMainLooper() == Looper.myLooper()) {
             throw new RequestException("can not request in main thread!", ResponseCode.CODE_ERROR_THREAD);
         }
-        Call call;
-        Response response;
-        try {
-            call = mOkHttp.newCall(builder.tag(tag).build());
-            response = call.execute();
-        } catch (Exception e) {
-            throw new RequestException("Network exception, please check the network! or look at Caused by ...", e, ResponseCode.CODE_ERROR_NO_NET);
+        synchronized (RequestBuilder.REQUEST_BUILDERS) {
+            if (requestNum >= MAX_REQUEST) {
+                throw new RequestException("Request will more than MAX_REQUEST,please hold on", ResponseCode.CODE_ERROR_WAIT);
+            }
+            requestNum += 1;
         }
-        ResponseBody body = response.body();
-        if (body != null) {
-            if (response.code() == 200) {
-                final String json;
-                try {
-                    json = body.string();
-                } catch (IOException e) {
-                    throw new RequestException("response.body stream read error! or look at Caused by ...", e, ResponseCode.CODE_ERROR_IO);
+        Call call = mOkHttp.newCall(builder.tag(tag).build());
+        try {
+            try (Response response = call.execute()) {
+                ResponseBody body = response.body();
+                if (body == null) {
+                    throw new RequestException("No data requested!", ResponseCode.CODE_ERROR_RESPONSE_NULL);
                 }
-                // 尝试预解析 code 和msg 字段
-                if (codeStr != null && msgStr != null) {
+                if (response.isSuccessful()) {
+                    final String json;
                     try {
-                        JSONObject jo = new JSONObject(json);
-                        int code = jo.getInt(codeStr);
-                        if (code != 200) {
-                            String msg = jo.getString(msgStr);
-                            throw new RequestException(msg, code);
-                        }
-                    } catch (JSONException e) {
-                        throw new RequestException("code or msg decode error! or look at Caused by ...", e, ResponseCode.CODE_ERROR_JSON_FORMAT);
+                        json = body.string();
+                    } catch (IOException e) {
+                        throw new RequestException("response.body stream read error! or look at Caused by ...", e, ResponseCode.CODE_ERROR_IO);
                     }
-                }
-                if (dClass == String.class || dClass == null) {
-                    return (D) json;
+                    // 尝试预解析 code 和msg 字段
+                    if (dClass != String.class && dClass != null) {
+                        if (codeStr != null && msgStr != null) {
+                            try {
+                                JSONObject jo = new JSONObject(json);
+                                int code = jo.getInt(codeStr);
+                                if (code != 0) {
+                                    String msg = jo.getString(msgStr);
+                                    CodeInterceptor interceptor = codeInterceptors.get(code);
+                                    if (interceptor != null) {
+                                        interceptor.onInterceptor(json, msg);
+                                    }
+                                    throw new RequestException(msg, code);
+                                }
+                            } catch (JSONException e) {
+                                throw new RequestException("code or msg in json decode error! or look at Caused by ...", e, ResponseCode.CODE_ERROR_JSON_FORMAT);
+                            }
+                        }
+                    }
+                    if (dClass == String.class || dClass == null) {
+                        return (D) json;
+                    } else {
+                        try {
+                            return GSON.fromJson(json, dClass);
+                        } catch (Exception e) {
+                            throw new RequestException("json decode error! or look at Caused by ...", e, ResponseCode.CODE_ERROR_JSON_FORMAT);
+                        }
+                    }
                 } else {
                     try {
-                        return GSON.fromJson(json, dClass);
-                    } catch (Exception e) {
-                        throw new RequestException("json decode error! or look at Caused by ...", e, ResponseCode.CODE_ERROR_JSON_FORMAT);
+                        String json = body.string();
+                        if (codeStr != null && msgStr != null) {
+                            try {
+                                JSONObject jo = new JSONObject(json);
+                                int code = jo.getInt(codeStr);
+                                if (code != 0) {
+                                    String msg = jo.getString(msgStr);
+                                    CodeInterceptor interceptor = codeInterceptors.get(code);
+                                    if (interceptor != null) {
+                                        interceptor.onInterceptor(json, msg);
+                                    }
+                                    RequestException innerException = new RequestException(msg, response.code());
+                                    throw new RequestException("Request Error, the http code=" + response.code() + ",code=" + code + ",msg=" + msg, innerException, code);
+                                }
+                            } catch (JSONException e) {
+                                throw new RequestException("Request Error, the http code=" + response.code() + ",data=" + json, e, response.code());
+                            }
+                        }
+                    } catch (IOException e) {
+                        throw new RequestException("Request Error, the http code=" + response.code(), e, response.code());
                     }
+                    throw new RequestException("Request Error, the http code=" + response.code(), response.code());
                 }
-            } else {
-                body.close();
-                throw new RequestException("Request Error, please check the error code!", response.code());
             }
-        } else {
-            throw new RequestException("No data requested!", ResponseCode.CODE_ERROR_RESPONSE_NULL);
+        } catch (Exception e) {
+            if (e instanceof RequestException) {
+                throw (RequestException) e;
+            }
+            throw new RequestException("Network exception, please check the network! or look at Caused by ...", e, ResponseCode.CODE_ERROR_NO_NET);
+        } finally {
+            synchronized (RequestBuilder.REQUEST_BUILDERS) {
+                requestNum -= 1;
+                if (requestNum < 0) requestNum = 0;
+            }
         }
     }
 
     public <D> D postJson(final String url, Map<String, String> urlParams, String json, Class<D> dClass, Map<String, String> header, int tag) throws RequestException {
-        if (url == null || url.length() < 1) {
+        if (url == null || url.isEmpty()) {
             throw new RequestException("url is illegal,please check you url", ResponseCode.CODE_ERROR_URL_ILLEGAL);
         }
-        OkHttpClient mOkHttp = client;
         HttpUrl httpUrl = HttpUrl.parse(url);
         if (httpUrl == null) {
             throw new RequestException("url parse error,please check you url", ResponseCode.CODE_ERROR_URL_ILLEGAL);
         }
-        RequestBody requestBody = FormBody.create(MediaType.parse("application/json; charset=utf-8"), json);
+        RequestBody requestBody = RequestBody.create(json, JSON_MEDIA_TYPE);
 
         HttpUrl.Builder httpBuilder = httpUrl.newBuilder();
         if (urlParams != null) {
@@ -228,6 +312,6 @@ public class CommonRequest {
                 }
             }
         }
-        return execute(mOkHttp, builder, dClass, tag);
+        return execute(client, builder, dClass, tag);
     }
 }

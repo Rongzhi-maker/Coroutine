@@ -3,8 +3,6 @@ package com.lrz.coroutine.flow;
 import com.lrz.coroutine.Priority;
 import com.lrz.coroutine.PriorityRunnable;
 
-import java.util.Arrays;
-
 /**
  * Author:  liurongzhi
  * CreateTime:  2022/9/22
@@ -32,7 +30,7 @@ public abstract class Task<T> extends PriorityRunnable {
     @Override
     public void run() {
         Observable<T> observable = this.observable;
-        if (observable == null) return;
+        if (observable == null || observable.isCancel()) return;
         try {
             T t = submit();
             observable.onSubscribe(t);
@@ -43,6 +41,10 @@ public abstract class Task<T> extends PriorityRunnable {
 
     public synchronized void setObservable(Observable<T> observable) {
         this.observable = observable;
+    }
+
+    public synchronized Observable<T> getObservable() {
+        return observable;
     }
 
     public abstract T submit();

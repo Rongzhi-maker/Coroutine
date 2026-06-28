@@ -126,7 +126,7 @@ class LJob implements Runnable {
                     System.arraycopy(stackTraceExtra, 0, stackTraceElements, oldLength, stackTraceExtra.length);
                     throwable.setStackTrace(stackTraceElements);
                 }
-                throw throwable;
+                throw new RuntimeException(throwable);
             }
 
             //判断如果是周期任务，则继续执行
@@ -183,13 +183,13 @@ class LJob implements Runnable {
 
     @Override
     public String toString() {
-        return "{" +
+        return "[" +
                 "\"hash\":" + this.hashCode() +
                 ", \"dispatcher\":" + "\"" + dispatcher + "\"" +
                 ", \"thread\":" + iHandlerThread +
                 ", \"sysTime\":" + sysTime +
                 ", \"delay\":" + delay +
                 ", \"isLoop\":" + isLoop +
-                '}';
+                ']';
     }
 }

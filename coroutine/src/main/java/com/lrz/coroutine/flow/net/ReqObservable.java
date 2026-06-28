@@ -1,14 +1,18 @@
 package com.lrz.coroutine.flow.net;
 
-import android.util.Log;
-
 import com.lrz.coroutine.Dispatcher;
+import com.lrz.coroutine.LLog;
 import com.lrz.coroutine.flow.Function;
+import com.lrz.coroutine.flow.IError;
+import com.lrz.coroutine.flow.OBJBox;
 import com.lrz.coroutine.flow.Observable;
 import com.lrz.coroutine.flow.Observer;
 import com.lrz.coroutine.flow.Task;
 
+import java.util.Deque;
+
 import okhttp3.Call;
+import okhttp3.OkHttpClient;
 
 /**
  * Author:  liurongzhi
@@ -30,8 +34,7 @@ public class ReqObservable<T> extends Observable<T> {
     }
 
     public synchronized ReqObservable<T> error(Dispatcher dispatcher, ReqError error) {
-        super.error(dispatcher, error);
-        return this;
+        return (ReqObservable<T>) super.error(dispatcher, error);
     }
 
     @Override
@@ -51,6 +54,12 @@ public class ReqObservable<T> extends Observable<T> {
         return (ReqObservable<T>) super.subscribe(dispatcher, result);
     }
 
+    @Override
+    protected void onSubscribe(T t) {
+        if (t == null && task != null && task instanceof RequestBuilder) return;
+        super.onSubscribe(t);
+    }
+
     /**
      * 发起get请求
      *
@@ -58,13 +67,10 @@ public class ReqObservable<T> extends Observable<T> {
      */
     @Override
     public final synchronized ReqObservable<T> GET() {
-        ((RequestBuilder<?>) getTask()).method(0);
-        // 如果有订阅者，则使用io线程，如果没有，则使用后台线程，表示是非紧急的任务
-        if (taskDispatcher == null) {
-            taskDispatcher = hasSubscriber() ? Dispatcher.IO : Dispatcher.BACKGROUND;
+        if (getTask() instanceof RequestBuilder) {
+            ((RequestBuilder<?>) getTask()).method(0);
         }
-        execute(taskDispatcher);
-        return this;
+        return execute(taskDispatcher);
     }
 
     /**
@@ -74,52 +80,71 @@ public class ReqObservable<T> extends Observable<T> {
      */
     @Override
     public final synchronized ReqObservable<T> POST() {
-        ((RequestBuilder<?>) getTask()).method(1);
-        if (taskDispatcher == null) {
-            taskDispatcher = hasSubscriber() ? Dispatcher.IO : Dispatcher.BACKGROUND;
+        if (getTask() instanceof RequestBuilder) {
+            ((RequestBuilder<?>) getTask()).method(1);
         }
-        execute(taskDispatcher);
-        return this;
+        return execute(taskDispatcher);
     }
 
     public ReqObservable<T> method(int method) {
-        ((RequestBuilder<?>) getTask()).method(method);
+        if (getTask() instanceof RequestBuilder) {
+            ((RequestBuilder<?>) getTask()).method(method);
+        }
         return this;
     }
 
     @Override
-    public synchronized Observable<T> execute(Dispatcher dispatcher) {
-        if (getError() == null) {
-            error(new DefReqError());
-        }
-        return super.execute(dispatcher);
+    public synchronized ReqObservable<T> execute(Dispatcher dispatcher) {
+        return (ReqObservable<T>) super.execute(dispatcher);
     }
 
     @Override
-    public synchronized Observable<T> execute() {
-        if (taskDispatcher == null) {
-            taskDispatcher = hasSubscriber() ? Dispatcher.IO : Dispatcher.BACKGROUND;
+    public synchronized ReqObservable<T> execute() {
+        if (getTask() instanceof RequestBuilder) {
+            // 如果有订阅者，则使用io线程，如果没有，则使用后台线程，表示是非紧急的任务
+            if (taskDispatcher == null) {
+                taskDispatcher = hasSubscriber() ? Dispatcher.IO : Dispatcher.BACKGROUND;
+            }
+            Deque<OBJBox<Dispatcher, IError<Throwable>>> errors = getErrors();
+            if (errors == null || errors.isEmpty()) {
+                error(new DefReqError());
+            }
+            // 提高性能，在这里拦截一部分请求，可以减少分配线程后再判断，浪费资源
+            synchronized (RequestBuilder.REQUEST_BUILDERS) {
+                if (CommonRequest.requestNum >= CommonRequest.MAX_REQUEST) {
+                    RequestBuilder.REQUEST_BUILDERS.add((RequestBuilder<?>) getTask());
+                    return this;
+                }
+            }
         }
-        if (getError() == null) {
-            error(new DefReqError());
-        }
-        return super.execute();
+        return (ReqObservable<T>) super.execute();
     }
 
     @Override
     public synchronized void cancel() {
-        super.cancel();
-        if (HttpClient.instance != null) {
-            for (Call call : HttpClient.instance.getClient().dispatcher().queuedCalls()) {
-                if (Integer.valueOf(hashCode()).equals(call.request().tag())) {
-                    call.cancel();
-                    return;
-                }
+        Task<?> task = getTask();
+        int realHash = -1;
+        if (task instanceof RequestBuilder) {
+            realHash = task.getObservable().hashCode();
+            synchronized (RequestBuilder.REQUEST_BUILDERS) {
+                RequestBuilder.REQUEST_BUILDERS.remove(task);
             }
-            for (Call call : HttpClient.instance.getClient().dispatcher().runningCalls()) {
-                if (Integer.valueOf(hashCode()).equals(call.request().tag())) {
-                    call.cancel();
-                    return;
+        }
+        super.cancel();
+        if (task instanceof RequestBuilder) {
+            OkHttpClient client = ((RequestBuilder<?>) task).getRequest().getClient();
+            if (client != null) {
+                for (Call call : client.dispatcher().queuedCalls()) {
+                    if (Integer.valueOf(realHash).equals(call.request().tag())) {
+                        call.cancel();
+                        return;
+                    }
+                }
+                for (Call call : client.dispatcher().runningCalls()) {
+                    if (Integer.valueOf(realHash).equals(call.request().tag())) {
+                        call.cancel();
+                        return;
+                    }
                 }
             }
         }
@@ -127,18 +152,24 @@ public class ReqObservable<T> extends Observable<T> {
 
     @Override
     public synchronized <F> ReqObservable<F> map(Function<T, F> function) {
-        this.map = function;
-        ReqObservable<F> observableF = new ReqObservable<>();
-        observableF.preObservable = this;
-        nextObservable = observableF;
-        return observableF;
+        return (ReqObservable<F>) super.map(function);
+    }
+
+    @Override
+    protected synchronized ReqObservable<T> map() {
+        return (ReqObservable<T>) super.map();
+    }
+
+    @Override
+    protected <F> Observable<F> createObservableNode() {
+        return new ReqObservable<>();
     }
 
     private boolean hasSubscriber() {
         Observable<?> pre = this;
         Observable<?> next = getNextObservable();
         while (pre != null || next != null) {
-            if ((pre != null && pre.getResult() != null) || (next != null && next.getResult() != null)) {
+            if ((pre != null && pre.getObserver() != null) || (next != null && next.getObserver() != null)) {
                 return true;
             }
             if (pre != null) {
@@ -155,7 +186,7 @@ public class ReqObservable<T> extends Observable<T> {
 
         @Override
         public void onError(RequestException error) {
-            Log.e("coroutine_def_error", "未处理的错误", error);
+            LLog.e("coroutine_def_error", "未处理的错误", error);
         }
     }
 }

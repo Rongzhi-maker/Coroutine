@@ -5,6 +5,7 @@ import com.lrz.coroutine.flow.Task;
 
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -14,17 +15,19 @@ import java.util.Map;
  * Description:
  */
 public abstract class RequestBuilder<B> extends Task<B> {
+    static final ArrayDeque<RequestBuilder<?>> REQUEST_BUILDERS = new ArrayDeque<>();
+    protected CommonRequest request;
     private String url;
     protected Map<String, String> headers;
     //参数
     private Map<String, String> params;
     //提交json
     private String json;
-    //0get,1post 2post_json
+    //0get,1post
     private int method;
 
     public RequestBuilder(String url) {
-        super();
+        super(Priority.HIGH);
         this.url = url;
     }
 
@@ -47,14 +50,27 @@ public abstract class RequestBuilder<B> extends Task<B> {
         } else {
             bClass = (Class<B>) type;
         }
-        if (method == 0)
-            return CommonRequest.request.requestGet(url, params, bClass, headers, observable.hashCode());
-        else {
-            if (json != null) {
-                return CommonRequest.request.postJson(url, params, json, bClass, headers, observable.hashCode());
+        try {
+            if (method == 0)
+                return request.requestGet(url, params, bClass, headers, observable.hashCode());
+            else {
+                if (json != null) {
+                    return request.postJson(url, params, json, bClass, headers, observable.hashCode());
+                }
+                return request.requestPost(url, params, bClass, headers, observable.hashCode());
             }
-            return CommonRequest.request.requestPost(url, params, bClass, headers, observable.hashCode());
+        } catch (RequestException e) {
+            if (e.getCode() == ResponseCode.CODE_ERROR_WAIT) {
+                //如果是队列已满
+                synchronized (REQUEST_BUILDERS) {
+                    REQUEST_BUILDERS.add(this);
+                }
+                return null;
+            } else throw e;
+        } finally {
+            RequestBuilder.exeWait();
         }
+
     }
 
     public RequestBuilder<B> url(String url) {
@@ -96,5 +112,22 @@ public abstract class RequestBuilder<B> extends Task<B> {
 
     public int getMethod() {
         return method;
+    }
+
+    public void setRequest(CommonRequest request) {
+        this.request = request;
+    }
+
+    public CommonRequest getRequest() {
+        return request;
+    }
+
+    public static void exeWait() {
+        synchronized (REQUEST_BUILDERS) {
+            Task<?> task = REQUEST_BUILDERS.pollFirst();
+            if (task != null) {
+                task.getObservable().execute();
+            }
+        }
     }
 }

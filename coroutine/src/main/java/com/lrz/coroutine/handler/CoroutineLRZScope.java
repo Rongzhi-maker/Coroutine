@@ -6,6 +6,7 @@ import com.lrz.coroutine.Dispatcher;
 import com.lrz.coroutine.LLog;
 import com.lrz.coroutine.Priority;
 import com.lrz.coroutine.PriorityRunnable;
+import com.lrz.coroutine.flow.Function;
 import com.lrz.coroutine.flow.Observable;
 import com.lrz.coroutine.flow.Task;
 
@@ -22,6 +23,8 @@ class CoroutineLRZScope implements CoroutineLRZContext, IHandlerThread.OnHandler
     static final MainHandlerThread mainHandler = new MainHandlerThread();
     private static final ArrayList<IHandlerThread> threadPool = new ArrayList<>();
     private static final ArrayList<IHandlerThread> backPool = new ArrayList<>();
+    private volatile Function<Throwable, Boolean> errorHandler;//未处理的错误兜底方案
+    private volatile boolean isIgnoreCrash = true;
     private long keepTime = 1000 * 10;
     //正在运行的io线程数量
     private static volatile int runningCount = 0;
@@ -32,11 +35,16 @@ class CoroutineLRZScope implements CoroutineLRZContext, IHandlerThread.OnHandler
      */
     private boolean stackTraceExtraEnable = false;
     /**
-     * 核心线程数量保持为 cpu 个数0.8，保证并发时的性能
+     * 总线程数量
+     * 低于4核手机：4核+2非+1后台 = 7
+     * 8核手机：8核+4非+2后台 = 14
+     * 核心线程数量保持为 cpu 个数，保证并发时的性能，最少4个核心线程
      */
-    private final int MAX_COUNT = (int) Math.max(Runtime.getRuntime().availableProcessors() * 0.8f, 2);
+    private final int MAX_COUNT = Math.max(Runtime.getRuntime().availableProcessors(), 4);
     /**
      * 最大弹性线程数量
+     * 根据核心线程数最少4个计算，非核心线程数量最少2个
+     * 思考：如果在使用网络模块的情况下，非核数量应该再多一点，例如=核心线程数量
      */
     private int ELASTIC_COUNT = MAX_COUNT / 2 > 1 ? MAX_COUNT / 2 : 2;
     /**
@@ -47,12 +55,12 @@ class CoroutineLRZScope implements CoroutineLRZContext, IHandlerThread.OnHandler
      * 工作队列已满，放到此容器中暂存
      */
     private final PriorityBlockingQueue<LJob> jobQueue = new PriorityBlockingQueue<>(MAX_COUNT, (o1, o2) -> {
-        int x1 = Priority.MEDIUM.ordinal(), x2 = Priority.MEDIUM.ordinal();
+        int x1 = Priority.MEDIUM.value, x2 = Priority.MEDIUM.value;
         if (o1.runnable instanceof PriorityRunnable) {
-            x1 = ((PriorityRunnable) o1.runnable).getPriority().ordinal();
+            x1 = ((PriorityRunnable) o1.runnable).getPriority().value;
         }
         if (o2.runnable instanceof PriorityRunnable) {
-            x2 = ((PriorityRunnable) o2.runnable).getPriority().ordinal();
+            x2 = ((PriorityRunnable) o2.runnable).getPriority().value;
         }
         if (x1 == x2) return (o1.sysTime > o2.sysTime ? 1 : -1);
         return x2 - x1;
@@ -156,11 +164,20 @@ class CoroutineLRZScope implements CoroutineLRZContext, IHandlerThread.OnHandler
             StackTraceElement[] stackTraceElements = Thread.currentThread().getStackTrace();
             StackTraceElement[] stackTrace = null;
             int j = 0;
+            boolean isAppStack = false;//是否已经进入到app的方法栈中
+            String packageName = LLog.class.getName().replace(LLog.class.getSimpleName(), "");
             for (int i = 0; i < stackTraceElements.length; i++) {
                 StackTraceElement element = stackTraceElements[i];
-                if (stackTrace == null && element.getClassName().equals(CoroutineLRZScope.class.getName())) {
-                    int length = Math.min(5, stackTraceElements.length - i - 1);
+                String nowPackage = element.getClassName();
+                if (!isAppStack && nowPackage.contains(packageName)) {
+                    isAppStack = true;
+                    continue;
+                }
+                if (isAppStack && stackTrace == null && !nowPackage.contains(packageName)) {
+                    int length = Math.min(8, stackTraceElements.length - i - 1);
                     stackTrace = new StackTraceElement[length];
+                    i -= 1;
+                    if (i < 0) i = 0;
                 } else if (stackTrace != null && j < stackTrace.length) {
                     stackTrace[j] = element;
                     j += 1;
@@ -409,5 +426,30 @@ class CoroutineLRZScope implements CoroutineLRZContext, IHandlerThread.OnHandler
     @Override
     public void setStackTraceExtraEnable(boolean stackTraceExtraEnable) {
         this.stackTraceExtraEnable = stackTraceExtraEnable;
+    }
+
+    @Override
+    public boolean getStackTraceExtraEnable() {
+        return this.stackTraceExtraEnable;
+    }
+
+    @Override
+    public synchronized void setEscapeHandler(Function<Throwable, Boolean> handler) {
+        this.errorHandler = handler;
+    }
+
+    @Override
+    public Function<Throwable, Boolean> getEscapeHandler() {
+        return errorHandler;
+    }
+
+    @Override
+    public void setIgnoreCrash(boolean isIgnoreCrash) {
+        this.isIgnoreCrash = isIgnoreCrash;
+    }
+
+    @Override
+    public boolean isIgnoreCrash() {
+        return this.isIgnoreCrash;
     }
 }

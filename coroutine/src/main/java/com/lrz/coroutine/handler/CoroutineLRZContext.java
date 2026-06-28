@@ -1,6 +1,7 @@
 package com.lrz.coroutine.handler;
 
 import com.lrz.coroutine.Dispatcher;
+import com.lrz.coroutine.flow.Function;
 import com.lrz.coroutine.flow.Observable;
 import com.lrz.coroutine.flow.Task;
 
@@ -46,6 +47,38 @@ public interface CoroutineLRZContext extends Executor {
 
     static void SetElasticCount(int count) {
         INSTANCE.setElasticCount(count);
+    }
+
+    static void SetStackTraceExtraEnable(boolean enable) {
+        INSTANCE.setStackTraceExtraEnable(enable);
+    }
+
+    static boolean GetStackTraceExtraEnable() {
+        return INSTANCE.getStackTraceExtraEnable();
+    }
+
+    /**
+     * 设置全局未处理的异常捕获
+     * @param handler
+     */
+    static void SetEscapeHandler(Function<Throwable,Boolean> handler) {
+        INSTANCE.setEscapeHandler(handler);
+    }
+
+    static Function<Throwable,Boolean> GetEscapeHandler() {
+        return INSTANCE.getEscapeHandler();
+    }
+
+    /**
+     * 设置是否忽略未处理的异常，默认忽略
+     * @param isIgnoreCrash boolean
+     */
+    static void SetIgnoreCrash(boolean isIgnoreCrash) {
+        INSTANCE.setIgnoreCrash(isIgnoreCrash);
+    }
+
+    static boolean IsIgnoreCrash() {
+       return INSTANCE.isIgnoreCrash();
     }
 
     /**
@@ -120,9 +153,29 @@ public interface CoroutineLRZContext extends Executor {
 
     /**
      * 设置是否开启额外调用堆栈
+     *
      * @param enable
      */
     void setStackTraceExtraEnable(boolean enable);
 
+    /**
+     * 是否开启额外调用堆栈
+     *
+     * @return boolean
+     */
+    boolean getStackTraceExtraEnable();
+
+    /**
+     * 设置逃逸error的策略
+     *
+     * @param handler 如果handler 返回true，则协程内部不再关注，如果返回false，则表示外部没有处理，直接抛出异常
+     */
+    void setEscapeHandler(Function<Throwable,Boolean> handler);
+
+    Function<Throwable,Boolean> getEscapeHandler();
+
+    void setIgnoreCrash(boolean isIgnoreCrash);
+
+    boolean isIgnoreCrash();
 
 }
